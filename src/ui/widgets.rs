@@ -31,7 +31,7 @@ pub(super) fn render_panel_shell(
 
 pub(super) fn panel_contrast_fg(p: &Palette) -> Color {
     match p.panel_bg {
-        Color::Reset => p.surface_dim,
+        Color::Reset => Color::Black,
         color => color,
     }
 }

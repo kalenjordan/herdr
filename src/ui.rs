@@ -1023,7 +1023,7 @@ mod tests {
     }
 
     #[test]
-    fn tab_bar_uses_surface_dim_when_panel_background_resets() {
+    fn tab_bar_uses_black_accent_text_when_panel_background_resets() {
         let mut app = crate::app::state::AppState::test_new();
         let mut ws = Workspace::test_new("test");
         let custom_tab = ws.test_add_tab(Some("logs"));
@@ -1046,7 +1046,7 @@ mod tests {
         let custom_style = buffer[(custom_rect.x + 1, custom_rect.y)].style();
 
         assert_eq!(custom_style.bg, Some(app.palette.accent));
-        assert_eq!(custom_style.fg, Some(app.palette.surface_dim));
+        assert_eq!(custom_style.fg, Some(Color::Black));
         assert!(custom_style.add_modifier.contains(Modifier::BOLD));
     }
 

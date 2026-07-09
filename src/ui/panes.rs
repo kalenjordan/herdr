@@ -348,8 +348,7 @@ pub(super) fn render_panes(
                 info.id,
                 info.inner_rect,
                 rt.scroll_metrics(),
-                &app.palette,
-                app.host_terminal_theme,
+                selection_background(&app.theme_name, &app.palette, app.host_terminal_theme),
             );
             render_copy_mode_search_highlights(
                 app,
@@ -729,24 +728,42 @@ fn render_copy_mode_search_highlights(
     }
 }
 
+fn is_terminal_theme(theme_name: &str) -> bool {
+    theme_name.to_ascii_lowercase().replace([' ', '_'], "-") == "terminal"
+}
+
+/// The selection background for the active theme: a fixed ANSI bright-black
+/// (dark gray) for the 16-color `terminal` theme, or the host-derived
+/// background for every other theme. The cell's own foreground and text
+/// styling always pass through on top (see `selection_highlight_style`).
+fn selection_background(
+    theme_name: &str,
+    p: &Palette,
+    host_theme: crate::terminal_theme::TerminalTheme,
+) -> Color {
+    if is_terminal_theme(theme_name) {
+        Color::DarkGray
+    } else {
+        automatic_selection_bg(p, host_theme)
+    }
+}
+
 fn render_selection_highlight(
     selection: &Option<crate::selection::Selection>,
     frame: &mut Frame,
     pane_id: crate::layout::PaneId,
     inner: Rect,
     scroll_metrics: Option<crate::pane::ScrollMetrics>,
-    p: &Palette,
-    host_theme: crate::terminal_theme::TerminalTheme,
+    bg: Color,
 ) {
     if let Some(sel) = selection {
         if sel.is_visible() && sel.pane_id == pane_id {
             let buf = frame.buffer_mut();
-            let style = automatic_selection_style(p, host_theme);
             for y in 0..inner.height {
                 for x in 0..inner.width {
                     if sel.contains(y, x, scroll_metrics) {
                         let cell = &mut buf[(inner.x + x, inner.y + y)];
-                        cell.set_style(style);
+                        cell.set_style(selection_highlight_style(cell.style(), bg));
                     }
                 }
             }
@@ -754,27 +771,34 @@ fn render_selection_highlight(
     }
 }
 
-type Rgb = (u8, u8, u8);
-
-fn automatic_selection_style(
-    p: &Palette,
-    host_theme: crate::terminal_theme::TerminalTheme,
-) -> Style {
-    let bg = automatic_selection_bg(p, host_theme);
-    Style::reset().fg(selection_fg_for_bg(bg, p)).bg(bg)
+/// Selection style: a uniform background with the cell's own foreground and
+/// text modifiers passed through, so styled text stays legible while selected.
+fn selection_highlight_style(cell_style: Style, bg: Color) -> Style {
+    let mut style = Style::reset().bg(bg);
+    if let Some(fg) = cell_style.fg {
+        style = style.fg(fg);
+    }
+    style.add_modifier(cell_style.add_modifier)
 }
+
+type Rgb = (u8, u8, u8);
 
 fn automatic_selection_bg(p: &Palette, host_theme: crate::terminal_theme::TerminalTheme) -> Color {
     let Some(background) = host_theme.background.map(terminal_theme_to_rgb) else {
         return selection_palette_background(p);
     };
 
+    // Tint the host background this far toward white (dark bg) or black (light
+    // bg). 0.14 matches the offset between ANSI black and bright-black in
+    // typical terminal themes, keeping the highlight subtle enough to preserve
+    // foreground legibility.
+    const SELECTION_TINT: f32 = 0.14;
     let target = if relative_luminance(background) < 0.5 {
         (255, 255, 255)
     } else {
         (0, 0, 0)
     };
-    let selected = mix_rgb(background, target, 0.28);
+    let selected = mix_rgb(background, target, SELECTION_TINT);
     Color::Rgb(selected.0, selected.1, selected.2)
 }
 
@@ -788,18 +812,6 @@ fn selection_palette_background(p: &Palette) -> Color {
 
 fn terminal_theme_to_rgb(color: crate::terminal_theme::RgbColor) -> Rgb {
     (color.r, color.g, color.b)
-}
-
-fn selection_fg_for_bg(bg: Color, p: &Palette) -> Color {
-    color_to_rgb(bg)
-        .map(|bg| {
-            if relative_luminance(bg) < 0.5 {
-                Color::White
-            } else {
-                Color::Black
-            }
-        })
-        .unwrap_or_else(|| panel_contrast_fg(p))
 }
 
 fn mix_rgb(base: Rgb, target: Rgb, amount: f32) -> Rgb {
@@ -823,30 +835,6 @@ fn relative_luminance(color: Rgb) -> f32 {
         }
     }
     0.2126 * channel(color.0) + 0.7152 * channel(color.1) + 0.0722 * channel(color.2)
-}
-
-fn color_to_rgb(color: Color) -> Option<Rgb> {
-    match color {
-        Color::Reset => None,
-        Color::Black => Some((0, 0, 0)),
-        Color::Red => Some((128, 0, 0)),
-        Color::Green => Some((0, 128, 0)),
-        Color::Yellow => Some((128, 128, 0)),
-        Color::Blue => Some((0, 0, 128)),
-        Color::Magenta => Some((128, 0, 128)),
-        Color::Cyan => Some((0, 128, 128)),
-        Color::Gray => Some((192, 192, 192)),
-        Color::DarkGray => Some((128, 128, 128)),
-        Color::LightRed => Some((255, 0, 0)),
-        Color::LightGreen => Some((0, 255, 0)),
-        Color::LightYellow => Some((255, 255, 0)),
-        Color::LightBlue => Some((0, 0, 255)),
-        Color::LightMagenta => Some((255, 0, 255)),
-        Color::LightCyan => Some((0, 255, 255)),
-        Color::White => Some((255, 255, 255)),
-        Color::Rgb(r, g, b) => Some((r, g, b)),
-        Color::Indexed(_) => None,
-    }
 }
 
 fn render_empty(app: &AppState, frame: &mut Frame, area: Rect) {
@@ -1316,17 +1304,7 @@ mod tests {
     }
 
     #[test]
-    fn selection_highlight_uses_one_uniform_style() {
-        let palette = Palette::catppuccin();
-        let host_theme = crate::terminal_theme::TerminalTheme {
-            foreground: None,
-            background: Some(crate::terminal_theme::RgbColor {
-                r: 12,
-                g: 14,
-                b: 16,
-            }),
-        };
-        let expected_style = automatic_selection_style(&palette, host_theme);
+    fn selection_highlight_preserves_foreground_modifiers_and_uses_dark_gray_background() {
         let selection = Some(Selection::range(PaneId::from_raw(1), 0, 0, 2, None));
         let backend = ratatui::backend::TestBackend::new(4, 1);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
@@ -1352,8 +1330,7 @@ mod tests {
                     PaneId::from_raw(1),
                     Rect::new(0, 0, 4, 1),
                     None,
-                    &palette,
-                    host_theme,
+                    Color::DarkGray,
                 );
             })
             .unwrap();
@@ -1363,39 +1340,96 @@ mod tests {
         let second = buffer[(1, 0)].style();
         let third = buffer[(2, 0)].style();
 
-        assert_eq!(first.fg, expected_style.fg);
-        assert_eq!(second.fg, expected_style.fg);
-        assert_eq!(third.fg, expected_style.fg);
-        assert_eq!(first.bg, expected_style.bg);
-        assert_eq!(second.bg, expected_style.bg);
-        assert_eq!(third.bg, expected_style.bg);
-        assert_eq!(first.add_modifier, expected_style.add_modifier);
-        assert_eq!(second.add_modifier, expected_style.add_modifier);
-        assert_eq!(third.add_modifier, expected_style.add_modifier);
-        assert!(!second.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(first.fg, Some(Color::Rgb(10, 220, 120)));
+        assert_eq!(second.fg, Some(Color::Rgb(220, 180, 40)));
+        assert_eq!(third.fg, Some(Color::Blue));
+        assert_eq!(first.bg, Some(Color::DarkGray));
+        assert_eq!(second.bg, Some(Color::DarkGray));
+        assert_eq!(third.bg, Some(Color::DarkGray));
+        assert_eq!(first.add_modifier, Modifier::empty());
+        assert_eq!(second.add_modifier, Modifier::BOLD);
+        assert_eq!(third.add_modifier, Modifier::empty());
+        assert!(second.add_modifier.contains(Modifier::BOLD));
     }
 
     #[test]
-    fn automatic_selection_background_uses_host_background() {
-        let bg = automatic_selection_bg(
-            &Palette::terminal(),
-            crate::terminal_theme::TerminalTheme {
-                foreground: Some(crate::terminal_theme::RgbColor {
-                    r: 230,
-                    g: 230,
-                    b: 230,
-                }),
-                background: Some(crate::terminal_theme::RgbColor {
-                    r: 12,
-                    g: 14,
-                    b: 16,
-                }),
-            },
+    fn selection_highlight_passes_through_foreground_for_non_terminal_themes() {
+        let palette = Palette::catppuccin();
+        let host_theme = crate::terminal_theme::TerminalTheme {
+            foreground: None,
+            background: Some(crate::terminal_theme::RgbColor {
+                r: 12,
+                g: 14,
+                b: 16,
+            }),
+        };
+        let expected_bg = automatic_selection_bg(&palette, host_theme);
+        let selection = Some(Selection::range(PaneId::from_raw(1), 0, 0, 2, None));
+        let backend = ratatui::backend::TestBackend::new(4, 1);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| {
+                let buf = frame.buffer_mut();
+                buf[(0, 0)].set_style(Style::default().fg(Color::Rgb(10, 220, 120)));
+                buf[(1, 0)].set_style(
+                    Style::default()
+                        .fg(Color::Rgb(220, 180, 40))
+                        .add_modifier(Modifier::BOLD),
+                );
+                render_selection_highlight(
+                    &selection,
+                    frame,
+                    PaneId::from_raw(1),
+                    Rect::new(0, 0, 4, 1),
+                    None,
+                    expected_bg,
+                );
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let first = buffer[(0, 0)].style();
+        let second = buffer[(1, 0)].style();
+
+        // Foreground and bold pass through on non-terminal themes too; only the
+        // background is host-derived (not the fixed terminal-theme dark gray).
+        assert_eq!(first.fg, Some(Color::Rgb(10, 220, 120)));
+        assert_eq!(second.fg, Some(Color::Rgb(220, 180, 40)));
+        assert_eq!(first.bg, Some(expected_bg));
+        assert_eq!(second.bg, Some(expected_bg));
+        assert_ne!(expected_bg, Color::DarkGray);
+        assert!(second.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn selection_background_is_dark_gray_only_for_terminal_theme() {
+        let host_theme = crate::terminal_theme::TerminalTheme {
+            foreground: None,
+            background: Some(crate::terminal_theme::RgbColor {
+                r: 12,
+                g: 14,
+                b: 16,
+            }),
+        };
+
+        // The `terminal` theme forces ANSI bright-black regardless of the host
+        // background, and the name match is case/separator insensitive.
+        assert_eq!(
+            selection_background("terminal", &Palette::terminal(), host_theme),
+            Color::DarkGray
+        );
+        assert_eq!(
+            selection_background("Terminal", &Palette::terminal(), host_theme),
+            Color::DarkGray
         );
 
-        let Color::Rgb(r, g, b) = bg else {
-            panic!("selection background should resolve to rgb");
-        };
-        assert!(relative_luminance((r, g, b)) > relative_luminance((12, 14, 16)));
+        // Other themes fall back to the host-derived background.
+        let other = selection_background("catppuccin", &Palette::catppuccin(), host_theme);
+        assert_eq!(
+            other,
+            automatic_selection_bg(&Palette::catppuccin(), host_theme)
+        );
+        assert_ne!(other, Color::DarkGray);
     }
 }
