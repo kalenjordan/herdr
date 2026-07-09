@@ -516,7 +516,28 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn ctrl_click_url_invokes_plugin_link_handler_but_super_click_does_not() {
+    async fn double_click_url_invokes_plugin_link_handler_instead_of_copying() {
+        let line = "see https://github.com/ogulcancelik/herdr/issues/398";
+        let col = line.find("github").expect("url host") as u16;
+        let (mut app, info) = app_with_screen_bytes(line.as_bytes());
+        install_test_link_handler(&mut app);
+
+        double_click(&mut app, info.inner_rect.x + col, info.inner_rect.y);
+
+        let log = app
+            .state
+            .plugin_command_logs
+            .last()
+            .expect("double-click should start plugin link handler");
+        assert_eq!(log.plugin_id, "example.links");
+        assert_eq!(log.action_id.as_deref(), Some("open"));
+        assert!(app.event_rx.try_recv().is_err());
+        assert_visible_selection(&app);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ctrl_click_url_invokes_plugin_link_handler() {
         let line = "see https://github.com/ogulcancelik/herdr/issues/398";
         let col = line.find("github").expect("url host") as u16;
 
@@ -536,6 +557,13 @@ mod tests {
             .expect("ctrl-click should start plugin link handler");
         assert_eq!(ctrl_log.plugin_id, "example.links");
         assert_eq!(ctrl_log.action_id.as_deref(), Some("open"));
+    }
+
+    #[cfg(all(unix, target_os = "macos"))]
+    #[tokio::test]
+    async fn command_click_url_invokes_plugin_link_handler() {
+        let line = "see https://github.com/ogulcancelik/herdr/issues/398";
+        let col = line.find("github").expect("url host") as u16;
 
         let (mut super_app, super_info) = app_with_screen_bytes(line.as_bytes());
         install_test_link_handler(&mut super_app);
@@ -546,7 +574,40 @@ mod tests {
             KeyModifiers::SUPER,
         ));
 
-        assert!(super_app.state.plugin_command_logs.is_empty());
+        let super_log = super_app
+            .state
+            .plugin_command_logs
+            .last()
+            .expect("command-click should start plugin link handler");
+        assert_eq!(super_log.plugin_id, "example.links");
+        assert_eq!(super_log.action_id.as_deref(), Some("open"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn pane_cell_clickable_target_finds_existing_file_path() {
+        let dir = std::env::temp_dir().join(format!("hct{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let file = dir.join("main.rs");
+        std::fs::create_dir_all(file.parent().expect("file parent")).expect("create parent");
+        std::fs::write(&file, b"fn main() {}\n").expect("write file");
+        let line = format!("open {}:12:3", file.display());
+        let (app, _info) = app_with_screen_bytes(line.as_bytes());
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let col = line.find("main.rs").expect("file name") as u16;
+
+        let target = app
+            .state
+            .clickable_target_at_pane_cell(&app.terminal_runtimes, pane_id, 0, col)
+            .expect("file path target");
+
+        assert_eq!(
+            target.uri,
+            format!("file://{}", file.to_string_lossy().replace(' ', "%20"))
+        );
+        assert!(!target.plugin_eligible);
+        assert!(target.selection.is_visible());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
@@ -629,7 +690,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn render_stream_does_not_synthesize_soft_wrapped_url_hyperlinks() {
+    async fn render_stream_synthesizes_soft_wrapped_url_hyperlinks() {
         let (_app, info) = app_with_screen_bytes(b"");
         let prefix = "https://example.com/";
         let padding = "b".repeat(info.inner_rect.width as usize - prefix.len());
@@ -639,23 +700,30 @@ mod tests {
         let links =
             crate::server::render_stream::visible_hyperlinks(&app.state, &app.terminal_runtimes);
 
-        assert!(links.is_empty());
+        assert!(links
+            .iter()
+            .any(|((_, y), symbol, uri)| *y == info.inner_rect.y + 1
+                && symbol == "t"
+                && uri == &url));
     }
 
     #[tokio::test]
-    async fn render_stream_does_not_synthesize_url_hyperlinks_after_zero_width_mark() {
+    async fn render_stream_does_not_shift_url_hyperlinks_after_zero_width_mark() {
         let url = "https://example.com/mark";
         let screen = format!("e\u{301} {url}");
-        let (app, _info) = app_with_screen_bytes(screen.as_bytes());
+        let (app, info) = app_with_screen_bytes(screen.as_bytes());
 
         let links =
             crate::server::render_stream::visible_hyperlinks(&app.state, &app.terminal_runtimes);
 
-        assert!(links.is_empty());
+        let expected_x = info.inner_rect.x + 2;
+        assert!(links.iter().any(|((x, y), symbol, uri)| {
+            *x == expected_x && *y == info.inner_rect.y && symbol == "h" && uri == url
+        }));
     }
 
     #[tokio::test]
-    async fn render_stream_does_not_synthesize_hard_newline_plain_url_hyperlinks() {
+    async fn render_stream_handles_hard_newline_after_full_row() {
         let (_app, info) = app_with_screen_bytes(b"");
         let full_row = "x".repeat(info.inner_rect.width as usize);
         let url = "https://example.com/next";
@@ -664,7 +732,32 @@ mod tests {
         let links =
             crate::server::render_stream::visible_hyperlinks(&app.state, &app.terminal_runtimes);
 
-        assert!(links.is_empty());
+        assert!(links
+            .iter()
+            .any(|((_, y), symbol, uri)| *y == info.inner_rect.y + 2
+                && symbol == "t"
+                && uri == url));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn render_stream_synthesizes_existing_file_path_hyperlinks() {
+        let dir = std::env::temp_dir().join(format!("hcr{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let file = dir.join("space.txt");
+        std::fs::write(&file, b"hello\n").expect("write file");
+        let line = format!("open \"{}:7\"", file.display());
+        let (app, info) = app_with_screen_bytes(line.as_bytes());
+
+        let links =
+            crate::server::render_stream::visible_hyperlinks(&app.state, &app.terminal_runtimes);
+        let expected_uri = format!("file://{}", file.to_string_lossy().replace(' ', "%20"));
+        let target_x = info.inner_rect.x + line.find("space").expect("file name") as u16;
+
+        assert!(links.iter().any(|((x, y), symbol, uri)| {
+            *x == target_x && *y == info.inner_rect.y && symbol == "s" && uri == &expected_uri
+        }));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

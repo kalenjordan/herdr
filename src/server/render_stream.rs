@@ -7,7 +7,8 @@ use crate::app::state::AppState;
 use crate::app::Mode;
 use crate::protocol::render_ansi::{BlitEncoder, EncodedBlit};
 use crate::protocol::{CursorState, FrameData, RenderEncoding, ServerMessage, TerminalFrame};
-use crate::terminal::TerminalRuntimeRegistry;
+use crate::selection::Selection;
+use crate::terminal::{TerminalRuntime, TerminalRuntimeRegistry};
 
 /// Per-client render baseline for the negotiated render encoding.
 pub(crate) enum ClientRenderState {
@@ -374,9 +375,103 @@ pub(crate) fn visible_hyperlinks(
             app_state.runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, info.id)
         {
             links.extend(runtime.visible_hyperlinks(info.inner_rect));
+            let metrics = app_state.pane_scroll_metrics(terminal_runtimes, info.id);
+            links.extend(plain_text_hyperlinks_for_pane(
+                runtime,
+                info.id,
+                info.inner_rect,
+                metrics,
+            ));
         }
     }
     links
+}
+
+fn plain_text_hyperlinks_for_pane(
+    runtime: &TerminalRuntime,
+    pane_id: crate::layout::PaneId,
+    area: Rect,
+    scroll_metrics: Option<crate::pane::ScrollMetrics>,
+) -> Vec<((u16, u16), String, String)> {
+    if area.width == 0 || area.height == 0 {
+        return Vec::new();
+    }
+    let visible_selection = Selection::line_range(
+        pane_id,
+        Selection::absolute_row_for_viewport(0, scroll_metrics),
+        Selection::absolute_row_for_viewport(area.height.saturating_sub(1), scroll_metrics),
+        area.width.saturating_sub(1),
+    );
+    let Some(text) = runtime.extract_selection(&visible_selection) else {
+        return Vec::new();
+    };
+    let mut links = Vec::new();
+    let cells = crate::app::actions::visible_text_cells(&text, area.width);
+    let cwd = runtime.foreground_cwd().or_else(|| runtime.cwd());
+    let mut line_start = 0;
+    for (byte_idx, ch) in text.char_indices() {
+        if ch == '\n' {
+            push_plain_text_line_links(
+                &mut links,
+                &text[line_start..byte_idx],
+                line_start,
+                &cells,
+                area,
+                cwd.as_deref(),
+            );
+            line_start = byte_idx + ch.len_utf8();
+        }
+    }
+    push_plain_text_line_links(
+        &mut links,
+        &text[line_start..],
+        line_start,
+        &cells,
+        area,
+        cwd.as_deref(),
+    );
+    let Some(buffer) = render_runtime_buffer(runtime, area) else {
+        return Vec::new();
+    };
+    links.retain(|((x, y), symbol, _)| {
+        *x < buffer.area.width
+            && *y < buffer.area.height
+            && buffer[(*x, *y)].symbol() == symbol.as_str()
+    });
+    links
+}
+
+fn push_plain_text_line_links(
+    links: &mut Vec<((u16, u16), String, String)>,
+    line: &str,
+    line_start: usize,
+    cells: &[crate::app::actions::VisibleTextCell],
+    area: Rect,
+    cwd: Option<&std::path::Path>,
+) {
+    for (start_col, end_col, uri) in crate::app::actions::clickable_spans(line, cwd) {
+        for cell in cells.iter().filter(|cell| {
+            cell.byte_index >= line_start
+                && cell.byte_index < line_start + line.len()
+                && cell.logical_col >= start_col
+                && cell.logical_col <= end_col
+        }) {
+            let x = area.x.saturating_add(cell.screen_col);
+            let y = area.y.saturating_add(cell.screen_row);
+            links.push(((x, y), cell.ch.to_string(), uri.clone()));
+        }
+    }
+}
+
+fn render_runtime_buffer(runtime: &TerminalRuntime, area: Rect) -> Option<ratatui::buffer::Buffer> {
+    let width = area.x.checked_add(area.width)?;
+    let height = area.y.checked_add(area.height)?;
+    let backend = TestBackend::new(width, height);
+    let mut terminal = ratatui::Terminal::new(backend).ok()?;
+    terminal
+        .draw(|frame| runtime.render(frame, area, false))
+        .ok()?;
+    Some(terminal.backend().buffer().clone())
 }
 
 pub(crate) fn focused_terminal_cursor(

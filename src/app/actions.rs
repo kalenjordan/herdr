@@ -1,6 +1,8 @@
 //! Pure state mutations on AppState.
 //! These don't need channels, async, or PTY runtime.
 
+use std::path::{Path, PathBuf};
+
 use tracing::{info, warn};
 
 use crate::detect::{Agent, AgentState};
@@ -1990,6 +1992,7 @@ impl AppState {
         true
     }
 
+    #[cfg(test)]
     pub(crate) fn url_at_pane_cell(
         &self,
         terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
@@ -2036,6 +2039,105 @@ impl AppState {
         url_at_column(line, logical_cell.logical_col).map(str::to_owned)
     }
 
+    pub(crate) fn clickable_target_at_pane_cell(
+        &self,
+        terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
+        pane_id: crate::layout::PaneId,
+        viewport_row: u16,
+        col: u16,
+    ) -> Option<PaneClickableTarget> {
+        let ws_idx = self
+            .active
+            .filter(|idx| self.workspaces.get(*idx).is_some())?;
+        let info = self.pane_info_by_id(pane_id)?;
+        if viewport_row >= info.inner_rect.height || col >= info.inner_rect.width {
+            return None;
+        }
+
+        let rt = self.runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, pane_id)?;
+        let screen_col = info.inner_rect.x.saturating_add(col);
+        let screen_row = info.inner_rect.y.saturating_add(viewport_row);
+        let visible_hyperlinks = rt.visible_hyperlinks(info.inner_rect);
+        if let Some((_, _, uri)) = visible_hyperlinks
+            .iter()
+            .find(|((x, y), _, _)| *x == screen_col && *y == screen_row)
+        {
+            let (uri, plugin_eligible) = if let Some(url) = safe_web_url(uri) {
+                (url.to_owned(), true)
+            } else if safe_file_url(uri).is_some() {
+                (uri.to_owned(), false)
+            } else {
+                return None;
+            };
+            let (start_col, end_col) =
+                hyperlink_row_bounds(&visible_hyperlinks, screen_col, screen_row, &uri, info);
+            return self.pane_clickable_target(
+                pane_id,
+                viewport_row,
+                start_col,
+                end_col,
+                uri,
+                plugin_eligible,
+                terminal_runtimes,
+            );
+        }
+
+        let metrics = self.pane_scroll_metrics(terminal_runtimes, pane_id);
+        let visible_selection = Selection::line_range(
+            pane_id,
+            Selection::absolute_row_for_viewport(0, metrics),
+            Selection::absolute_row_for_viewport(info.inner_rect.height.saturating_sub(1), metrics),
+            info.inner_rect.width.saturating_sub(1),
+        );
+        let visible_text = rt.extract_selection(&visible_selection)?;
+        let logical_cell =
+            logical_cell_for_visible_cell(&visible_text, info.inner_rect.width, viewport_row, col)?;
+        let line_start = visible_text[..logical_cell.byte_index]
+            .rfind('\n')
+            .map_or(0, |idx| idx + 1);
+        let line_end = visible_text[logical_cell.byte_index..]
+            .find('\n')
+            .map_or(visible_text.len(), |idx| logical_cell.byte_index + idx);
+        let line = visible_text.get(line_start..line_end)?;
+        let cwd = rt.foreground_cwd().or_else(|| rt.cwd());
+        let (start_col, end_col, uri, plugin_eligible) =
+            clickable_target_at_column(line, logical_cell.logical_col, cwd.as_deref())?;
+        self.pane_clickable_target(
+            pane_id,
+            viewport_row,
+            start_col,
+            end_col,
+            uri,
+            plugin_eligible,
+            terminal_runtimes,
+        )
+    }
+
+    fn pane_clickable_target(
+        &self,
+        pane_id: crate::layout::PaneId,
+        viewport_row: u16,
+        start_col: u16,
+        end_col: u16,
+        uri: String,
+        plugin_eligible: bool,
+        terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
+    ) -> Option<PaneClickableTarget> {
+        let mut selection = Selection::range(
+            pane_id,
+            viewport_row,
+            start_col,
+            end_col,
+            self.pane_scroll_metrics(terminal_runtimes, pane_id),
+        );
+        selection.finish();
+        Some(PaneClickableTarget {
+            uri,
+            selection,
+            plugin_eligible,
+        })
+    }
+
     pub fn copy_selection(&mut self, terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry) {
         let mut sel = match self.selection.take() {
             Some(sel) => sel,
@@ -2068,6 +2170,41 @@ pub(crate) fn safe_web_url(url: &str) -> Option<&str> {
     (url.starts_with("http://") || url.starts_with("https://")).then_some(url)
 }
 
+fn safe_file_url(url: &str) -> Option<&str> {
+    url.starts_with("file://").then_some(url)
+}
+
+fn hyperlink_row_bounds(
+    links: &[((u16, u16), String, String)],
+    screen_col: u16,
+    screen_row: u16,
+    uri: &str,
+    info: &crate::layout::PaneInfo,
+) -> (u16, u16) {
+    let mut cols = links
+        .iter()
+        .filter_map(|((x, y), _, link_uri)| (*y == screen_row && link_uri == uri).then_some(*x))
+        .collect::<Vec<_>>();
+    cols.sort_unstable();
+    let Some(clicked_idx) = cols.iter().position(|col| *col == screen_col) else {
+        let col = screen_col.saturating_sub(info.inner_rect.x);
+        return (col, col);
+    };
+
+    let mut start = clicked_idx;
+    while start > 0 && cols[start - 1].saturating_add(1) == cols[start] {
+        start -= 1;
+    }
+    let mut end = clicked_idx;
+    while end + 1 < cols.len() && cols[end].saturating_add(1) == cols[end + 1] {
+        end += 1;
+    }
+    (
+        cols[start].saturating_sub(info.inner_rect.x),
+        cols[end].saturating_sub(info.inner_rect.x),
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TextCell {
     ch: char,
@@ -2091,6 +2228,13 @@ impl CellSpan {
     }
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct PaneClickableTarget {
+    pub(crate) uri: String,
+    pub(crate) selection: Selection,
+    pub(crate) plugin_eligible: bool,
+}
+
 /// Finds the terminal display-column bounds for the token under a double-click.
 ///
 /// The algorithm first maps text to terminal cells so wide characters and
@@ -2111,6 +2255,7 @@ fn word_bounds_at_column(row: &str, col: u16) -> Option<(u16, u16)> {
     Some(span.columns(&cells))
 }
 
+#[cfg(test)]
 pub(crate) fn url_at_column(row: &str, col: u16) -> Option<&str> {
     let cells = text_cells(row);
     let clicked_idx = cell_index_at_column(&cells, col)?;
@@ -2120,6 +2265,220 @@ pub(crate) fn url_at_column(row: &str, col: u16) -> Option<&str> {
     let start_byte = byte_index_for_cell(row, span.start);
     let end_byte = byte_index_after_cell(row, span.end);
     safe_web_url(row.get(start_byte..end_byte)?)
+}
+
+pub(crate) fn clickable_spans(row: &str, cwd: Option<&Path>) -> Vec<(u16, u16, String)> {
+    let mut spans = Vec::new();
+    let cells = text_cells(row);
+    let url_spans = url_spans(&cells);
+    for span in &url_spans {
+        let start_byte = byte_index_for_cell(row, span.start);
+        let end_byte = byte_index_after_cell(row, span.end);
+        if let Some(url) = row.get(start_byte..end_byte).and_then(safe_web_url) {
+            let (start_col, end_col) = span.columns(&cells);
+            spans.push((start_col, end_col, url.to_owned()));
+        }
+    }
+    for span in path_spans(row, &cells, cwd) {
+        if url_spans
+            .iter()
+            .any(|url_span| spans_overlap(*url_span, span.span))
+        {
+            continue;
+        }
+        let (start_col, end_col) = span.span.columns(&cells);
+        spans.push((start_col, end_col, span.uri));
+    }
+    spans
+}
+
+fn clickable_target_at_column(
+    row: &str,
+    col: u16,
+    cwd: Option<&Path>,
+) -> Option<(u16, u16, String, bool)> {
+    let cells = text_cells(row);
+    let clicked_idx = cell_index_at_column(&cells, col)?;
+    let url_span = url_spans(&cells)
+        .into_iter()
+        .find(|span| span.contains(clicked_idx));
+    if let Some(span) = url_span {
+        let start_byte = byte_index_for_cell(row, span.start);
+        let end_byte = byte_index_after_cell(row, span.end);
+        let url = row.get(start_byte..end_byte).and_then(safe_web_url)?;
+        let (start_col, end_col) = span.columns(&cells);
+        return Some((start_col, end_col, url.to_owned(), true));
+    }
+
+    let path_span = path_spans(row, &cells, cwd)
+        .into_iter()
+        .find(|span| span.span.contains(clicked_idx))?;
+    let (start_col, end_col) = path_span.span.columns(&cells);
+    Some((start_col, end_col, path_span.uri, false))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PathSpan {
+    span: CellSpan,
+    uri: String,
+}
+
+fn path_spans(row: &str, cells: &[TextCell], cwd: Option<&Path>) -> Vec<PathSpan> {
+    let mut spans = Vec::new();
+    for span in quoted_path_spans(cells)
+        .into_iter()
+        .chain(token_spans(cells).into_iter())
+    {
+        if spans_overlap_any(
+            span,
+            spans.iter().map(|path_span: &PathSpan| path_span.span),
+        ) {
+            continue;
+        }
+        let start_byte = byte_index_for_cell(row, span.start);
+        let end_byte = byte_index_after_cell(row, span.end);
+        let Some(text) = row.get(start_byte..end_byte) else {
+            continue;
+        };
+        let Some(path) = resolve_visible_path(text, cwd) else {
+            continue;
+        };
+        spans.push(PathSpan {
+            span,
+            uri: file_uri_for_path(&path),
+        });
+    }
+    spans
+}
+
+fn quoted_path_spans(cells: &[TextCell]) -> Vec<CellSpan> {
+    let mut spans = Vec::new();
+    for quote in ['"', '\'', '`'] {
+        let mut start = None;
+        for (idx, cell) in cells.iter().copied().enumerate() {
+            let ch = cell.ch;
+            if ch != quote || is_escaped(cells, idx) {
+                continue;
+            }
+            if let Some(open) = start {
+                if idx > open + 1 && cells[open + 1..idx].iter().any(|cell| cell.ch == '/') {
+                    spans.push(CellSpan {
+                        start: open + 1,
+                        end: idx - 1,
+                    });
+                }
+                start = None;
+            } else {
+                start = Some(idx);
+            }
+        }
+    }
+    spans
+}
+
+fn token_spans(cells: &[TextCell]) -> Vec<CellSpan> {
+    let mut spans = Vec::new();
+    let mut idx = 0;
+    while idx < cells.len() {
+        if is_word_separator(cells[idx].ch) {
+            idx += 1;
+            continue;
+        }
+        let start = idx;
+        while idx + 1 < cells.len() && !is_word_separator(cells[idx + 1].ch) {
+            idx += 1;
+        }
+        if let Some(span) = trim_token_edges(cells, CellSpan { start, end: idx }) {
+            spans.push(span);
+        }
+        idx += 1;
+    }
+    spans
+}
+
+fn resolve_visible_path(text: &str, cwd: Option<&Path>) -> Option<PathBuf> {
+    if text.starts_with("http://") || text.starts_with("https://") {
+        return None;
+    }
+    let mut path_text = text;
+    let mut stripped_suffix = None;
+    if let Some(stripped) = strip_line_column_suffix(path_text) {
+        stripped_suffix = Some(stripped);
+    }
+
+    resolve_path_candidate(path_text, cwd).or_else(|| {
+        path_text = stripped_suffix?;
+        resolve_path_candidate(path_text, cwd)
+    })
+}
+
+fn strip_line_column_suffix(text: &str) -> Option<&str> {
+    let (before_col, col) = text.rsplit_once(':')?;
+    if col.is_empty() || !col.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    if let Some((before_line, line)) = before_col.rsplit_once(':') {
+        if !line.is_empty() && line.chars().all(|ch| ch.is_ascii_digit()) {
+            return Some(before_line);
+        }
+    }
+    Some(before_col)
+}
+
+fn resolve_path_candidate(text: &str, cwd: Option<&Path>) -> Option<PathBuf> {
+    if !looks_like_path(text) {
+        return None;
+    }
+    let path = expand_home_path(text).unwrap_or_else(|| PathBuf::from(text));
+    let path = if path.is_absolute() {
+        path
+    } else {
+        cwd?.join(path)
+    };
+    std::fs::metadata(&path).ok()?;
+    Some(path)
+}
+
+fn looks_like_path(text: &str) -> bool {
+    text.starts_with('/')
+        || text.starts_with("~/")
+        || text.starts_with("./")
+        || text.starts_with("../")
+        || text.contains('/')
+        || Path::new(text).extension().is_some()
+}
+
+fn expand_home_path(text: &str) -> Option<PathBuf> {
+    let rest = text.strip_prefix("~/")?;
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(rest))
+}
+
+fn file_uri_for_path(path: &Path) -> String {
+    let path = path.to_string_lossy();
+    #[cfg(windows)]
+    let path = path.replace('\\', "/");
+    format!("file://{}", percent_encode_uri_path(&path))
+}
+
+fn percent_encode_uri_path(path: &str) -> String {
+    let mut encoded = String::with_capacity(path.len());
+    for byte in path.as_bytes() {
+        let ch = *byte as char;
+        if ch.is_ascii_alphanumeric() || matches!(ch, '/' | '-' | '_' | '.' | '~') {
+            encoded.push(ch);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
+fn spans_overlap(a: CellSpan, b: CellSpan) -> bool {
+    a.start <= b.end && b.start <= a.end
+}
+
+fn spans_overlap_any(spans: CellSpan, others: impl Iterator<Item = CellSpan>) -> bool {
+    others.into_iter().any(|other| spans_overlap(spans, other))
 }
 
 fn url_spans(cells: &[TextCell]) -> Vec<CellSpan> {
@@ -3118,6 +3477,17 @@ mod tests {
         url_at_column(row, col_of(row, click))
     }
 
+    fn selected_clickable_uri(
+        row: &str,
+        click: &str,
+        cwd: Option<&std::path::Path>,
+    ) -> Option<String> {
+        let col = col_of(row, click);
+        clickable_spans(row, cwd)
+            .into_iter()
+            .find_map(|(start, end, uri)| (col >= start && col <= end).then_some(uri))
+    }
+
     fn text_in_cell_range(row: &str, start_col: u16, end_col: u16) -> String {
         text_cells(row)
             .into_iter()
@@ -3301,6 +3671,28 @@ mod tests {
             None
         );
         assert_eq!(selected_url("open file:///tmp/report", "file"), None);
+    }
+
+    #[test]
+    fn clickable_spans_resolve_existing_relative_paths_from_cwd() {
+        let dir =
+            std::env::temp_dir().join(format!("herdr-clickable-relative-{}", std::process::id()));
+        let file = dir.join("podcast").join("clips").join("README.md");
+        std::fs::create_dir_all(file.parent().expect("file parent")).expect("create parent");
+        std::fs::write(&file, b"# clips\n").expect("write file");
+
+        let uri = selected_clickable_uri(
+            "Edited podcast/clips/README.md (+3 -1)",
+            "README",
+            Some(&dir),
+        )
+        .expect("relative path uri");
+
+        assert_eq!(
+            uri,
+            format!("file://{}", file.to_string_lossy().replace(' ', "%20"))
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -24,14 +24,24 @@ enum WheelRouting {
 const WORKSPACE_DRAG_THRESHOLD: u16 = 1;
 const TAB_DRAG_THRESHOLD: u16 = 1;
 
-fn modified_url_click_modifier() -> KeyModifiers {
-    KeyModifiers::CONTROL
+fn is_modified_url_click(modifiers: KeyModifiers) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        modifiers.contains(KeyModifiers::SUPER)
+            || modifiers.contains(KeyModifiers::META)
+            || modifiers.contains(KeyModifiers::CONTROL)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        modifiers.contains(KeyModifiers::CONTROL)
+    }
 }
 
 #[cfg(test)]
 #[test]
-fn modified_url_click_modifier_matches_terminal_mouse_reporting() {
-    assert_eq!(modified_url_click_modifier(), KeyModifiers::CONTROL);
+fn modified_url_click_accepts_control() {
+    assert!(is_modified_url_click(KeyModifiers::CONTROL));
 }
 
 mod copy_mode;
@@ -376,7 +386,7 @@ impl App {
     fn handle_modified_url_click(&mut self, mouse: MouseEvent) -> bool {
         if self.state.mode != Mode::Terminal
             || !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
-            || !mouse.modifiers.contains(modified_url_click_modifier())
+            || !is_modified_url_click(mouse.modifiers)
         {
             return false;
         }
@@ -386,23 +396,40 @@ impl App {
         };
         let viewport_row = mouse.row.saturating_sub(info.inner_rect.y);
         let col = mouse.column.saturating_sub(info.inner_rect.x);
-        let Some(url) =
-            self.state
-                .url_at_pane_cell(&self.terminal_runtimes, info.id, viewport_row, col)
-        else {
+        let Some(target) = self.state.clickable_target_at_pane_cell(
+            &self.terminal_runtimes,
+            info.id,
+            viewport_row,
+            col,
+        ) else {
             return false;
         };
 
         self.last_pane_click = None;
-        match self.invoke_plugin_link_handler_for_url(&url, info.id) {
-            Ok(true) => return true,
-            Ok(false) => {}
-            Err(err) => {
-                tracing::warn!(err = %err, url = %url, "failed to invoke plugin link handler");
+        self.open_clickable_target(info.id, target)
+    }
+
+    fn open_clickable_target(
+        &mut self,
+        pane_id: crate::layout::PaneId,
+        target: crate::app::actions::PaneClickableTarget,
+    ) -> bool {
+        self.state.selection = Some(target.selection);
+        self.state.selection_autoscroll = None;
+        self.selection_highlight_clear_deadline =
+            Some(std::time::Instant::now() + super::PANE_COPY_HIGHLIGHT_DURATION);
+
+        if target.plugin_eligible {
+            match self.invoke_plugin_link_handler_for_url(&target.uri, pane_id) {
+                Ok(true) => return true,
+                Ok(false) => {}
+                Err(err) => {
+                    tracing::warn!(err = %err, url = %target.uri, "failed to invoke plugin link handler");
+                }
             }
         }
-        if let Err(err) = crate::platform::open_url(&url) {
-            tracing::warn!(err = %err, url = %url, "failed to open pane URL");
+        if let Err(err) = crate::platform::open_url(&target.uri) {
+            tracing::warn!(err = %err, url = %target.uri, "failed to open pane URL");
         }
         true
     }
@@ -438,6 +465,15 @@ impl App {
         // and within the double-click window so adjacent interactions do not copy.
         if !self.take_pane_double_click(click) {
             return false;
+        }
+
+        if let Some(target) = self.state.clickable_target_at_pane_cell(
+            &self.terminal_runtimes,
+            click.pane_id,
+            click.viewport_row,
+            click.col,
+        ) {
+            return self.open_clickable_target(click.pane_id, target);
         }
 
         // Preserve a short highlight after copying so the user gets visible
