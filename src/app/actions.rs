@@ -1072,15 +1072,16 @@ impl AppState {
             })
             .cloned()
             .collect();
+        let selected = if candidates.is_empty() { 0 } else { 1 };
         if !candidates.is_empty() {
             if let Some(original) = original {
-                candidates.push(original);
+                candidates.insert(0, original);
             }
         }
         self.recent_workspace = Some(crate::app::state::RecentWorkspaceState {
             kind: crate::app::state::WorkspaceSwitcherKind::Recent,
             candidates,
-            selected: 0,
+            selected,
         });
         self.mode = crate::app::state::Mode::RecentWorkspace;
         true
@@ -4508,8 +4509,9 @@ mod tests {
                 .iter()
                 .map(|target| target.workspace_id.clone())
                 .collect::<Vec<_>>(),
-            vec![b.clone(), a.clone(), c.clone()]
+            vec![c.clone(), b.clone(), a.clone()]
         );
+        assert_eq!(recent.selected, 1);
         assert_eq!(state.active, Some(2));
 
         state.cycle_recent_workspace_switcher();
@@ -4547,7 +4549,7 @@ mod tests {
                 .iter()
                 .map(|target| target.workspace_id.clone())
                 .collect::<Vec<_>>(),
-            vec![b, a, state.workspaces[2].id.clone()]
+            vec![state.workspaces[2].id.clone(), b, a]
         );
     }
 
@@ -4581,8 +4583,9 @@ mod tests {
         assert!(state.open_recent_workspace_switcher());
 
         let candidates = &state.recent_workspace.as_ref().unwrap().candidates;
-        assert_eq!(candidates[0].tab_number, second_tab_number);
-        assert_eq!(candidates[1].tab_number, first_tab_number);
+        assert_eq!(candidates[1].tab_number, second_tab_number);
+        assert_eq!(candidates[2].tab_number, first_tab_number);
+        assert_eq!(state.recent_workspace.as_ref().unwrap().selected, 1);
         assert!(state.commit_recent_workspace_switcher());
         assert_eq!(state.active, Some(0));
         assert_eq!(state.workspaces[0].active_tab, second_tab);
