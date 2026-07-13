@@ -1461,6 +1461,10 @@ impl AppState {
         self.selection = None;
         self.selection_autoscroll = None;
         self.mark_session_dirty();
+        let active_workspace_id = self
+            .active
+            .and_then(|idx| self.workspaces.get(idx))
+            .map(|ws| ws.id.clone());
         let close_indices = self
             .workspaces
             .get(self.selected)
@@ -1479,6 +1483,9 @@ impl AppState {
             })
             .filter(|indices| indices.len() >= 2)
             .unwrap_or_else(|| vec![self.selected]);
+        let active_is_closing = self
+            .active
+            .is_some_and(|active| close_indices.contains(&active));
 
         let mut terminal_ids = Vec::new();
         let mut pane_ids = Vec::new();
@@ -1501,10 +1508,22 @@ impl AppState {
             self.tab_scroll = 0;
             self.tab_scroll_follow_active = true;
         } else {
-            if self.selected >= self.workspaces.len() {
-                self.selected = self.workspaces.len() - 1;
+            let preserved_active_idx = if active_is_closing {
+                None
+            } else {
+                active_workspace_id
+                    .as_deref()
+                    .and_then(|id| self.workspaces.iter().position(|ws| ws.id == id))
+            };
+            if let Some(active_idx) = preserved_active_idx {
+                self.active = Some(active_idx);
+                self.selected = active_idx;
+            } else {
+                if self.selected >= self.workspaces.len() {
+                    self.selected = self.workspaces.len() - 1;
+                }
+                self.active = Some(self.selected);
             }
-            self.active = Some(self.selected);
             self.workspace_scroll = self
                 .workspace_scroll
                 .min(self.workspaces.len().saturating_sub(1));
@@ -4493,6 +4512,24 @@ mod tests {
         assert_eq!(state.selected, 1);
         assert_eq!(state.active, Some(1));
         assert_eq!(state.workspaces[1].custom_name.as_deref(), Some("c"));
+    }
+
+    #[test]
+    fn close_background_workspace_preserves_active_workspace() {
+        let mut state = app_with_workspaces(&["active", "closed", "other"]);
+        let active_id = state.workspaces[0].id.clone();
+        state.active = Some(0);
+        state.selected = 1;
+
+        state.close_selected_workspace();
+
+        assert_eq!(state.workspaces.len(), 2);
+        assert_eq!(state.active, Some(0));
+        assert_eq!(state.selected, 0);
+        assert_eq!(state.workspaces[0].id, active_id);
+        assert_eq!(state.workspaces[0].display_name(), "active");
+        assert_eq!(state.workspaces[1].display_name(), "other");
+        state.assert_invariants_for_test();
     }
 
     #[test]

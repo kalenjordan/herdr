@@ -1928,6 +1928,38 @@ mod tests {
     }
 
     #[test]
+    fn context_menu_close_background_workspace_confirm_preserves_active_workspace() {
+        let mut state = state_with_workspaces(&["active", "closed"]);
+        state.ensure_test_terminals();
+        let active_id = state.workspaces[0].id.clone();
+        state.active = Some(0);
+        state.selected = 0;
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::Workspace { ws_idx: 1 },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(1),
+        };
+        let mut terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+
+        apply_context_menu_action(&mut state, &mut terminal_runtimes, menu, 1);
+
+        assert_eq!(state.selected, 1);
+        assert_eq!(state.active, Some(0));
+        assert_eq!(state.mode, Mode::ConfirmClose);
+
+        confirm_close_accept(&mut state);
+
+        assert_eq!(state.workspaces.len(), 1);
+        assert_eq!(state.active, Some(0));
+        assert_eq!(state.selected, 0);
+        assert_eq!(state.workspaces[0].id, active_id);
+        assert_eq!(state.workspaces[0].display_name(), "active");
+        assert_eq!(state.mode, Mode::Terminal);
+        state.assert_invariants_for_test();
+    }
+
+    #[test]
     fn context_menu_close_pane_last_parent_group_pane_keeps_confirmation_mode() {
         let mut state = state_with_workspaces(&["main", "issue"]);
         state.active = Some(0);

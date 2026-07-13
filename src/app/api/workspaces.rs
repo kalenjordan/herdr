@@ -331,6 +331,40 @@ mod tests {
     }
 
     #[test]
+    fn api_workspace_close_background_workspace_preserves_active_workspace() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.workspaces = vec![Workspace::test_new("active"), Workspace::test_new("closed")];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        let active_id = app.state.workspaces[0].id.clone();
+        let close_id = app.state.workspaces[1].id.clone();
+
+        let response = app.handle_workspace_close(
+            "req".into(),
+            WorkspaceTarget {
+                workspace_id: close_id,
+            },
+        );
+
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(success.id, "req");
+        assert_eq!(app.state.workspaces.len(), 1);
+        assert_eq!(app.state.active, Some(0));
+        assert_eq!(app.state.selected, 0);
+        assert_eq!(app.state.workspaces[0].id, active_id);
+        assert_eq!(app.state.workspaces[0].display_name(), "active");
+        app.state.assert_invariants_for_test();
+    }
+
+    #[test]
     fn api_workspace_close_event_includes_final_worktree_snapshot() {
         let event_hub = crate::api::EventHub::default();
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
