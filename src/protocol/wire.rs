@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 // ---------------------------------------------------------------------------
 
 /// Current protocol version. Bumped when wire format changes incompatibly.
-pub const PROTOCOL_VERSION: u32 = 16;
+pub const PROTOCOL_VERSION: u32 = 17;
 
 /// Maximum allowed frame payload size (2 MB). Frames larger than this are
 /// rejected to prevent denial-of-service via oversized length prefixes.
@@ -664,6 +664,9 @@ pub enum ServerMessage {
         /// Whether the ASCII input source should be active.
         active: bool,
     },
+
+    /// Whether the foreground terminal should report standalone modifier keys.
+    ModifierKeyReporting { enabled: bool },
 }
 
 // ---------------------------------------------------------------------------
@@ -1416,6 +1419,17 @@ mod tests {
     fn server_prefix_input_source_roundtrip() {
         for active in [true, false] {
             let msg = ServerMessage::PrefixInputSource { active };
+            let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+            let (decoded, _): (ServerMessage, _) =
+                bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+            assert_eq!(msg, decoded);
+        }
+    }
+
+    #[test]
+    fn server_modifier_key_reporting_roundtrip() {
+        for enabled in [true, false] {
+            let msg = ServerMessage::ModifierKeyReporting { enabled };
             let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
             let (decoded, _): (ServerMessage, _) =
                 bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();

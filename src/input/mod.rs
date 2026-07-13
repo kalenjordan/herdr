@@ -8,6 +8,7 @@ pub use encode::{
 };
 #[cfg(not(windows))]
 pub use model::ime_compatible_keyboard_enhancement_flags;
+pub use model::set_modifier_key_reporting;
 pub use model::{
     host_modify_other_keys_mode, KeyboardProtocol, MouseProtocolEncoding, MouseProtocolMode,
     TerminalKey,

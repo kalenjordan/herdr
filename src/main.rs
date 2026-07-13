@@ -181,6 +181,7 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # rename_workspace = "prefix+shift+w"
 # close_workspace = "prefix+shift+d"
 # previous_workspace = "" # optional, unset by default
+# recent_workspace = "cmd+e"
 # next_workspace = ""     # optional, unset by default
 # previous_agent = ""     # optional, unset by default
 # next_agent = ""         # optional, unset by default

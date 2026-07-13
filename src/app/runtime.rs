@@ -80,6 +80,7 @@ impl App {
                 changed |= self.ensure_default_workspace();
             }
             self.sync_prefix_input_source(previous_mode);
+            self.sync_modifier_key_reporting(previous_mode);
             return changed | deferred_changed;
         }
         let response = self.handle_api_request(msg.request);
@@ -88,6 +89,7 @@ impl App {
         }
         let _ = msg.respond_to.send(response);
         self.sync_prefix_input_source(previous_mode);
+        self.sync_modifier_key_reporting(previous_mode);
         changed
     }
 
@@ -141,7 +143,15 @@ impl App {
                     }
                     crossterm::event::KeyEventKind::Release => {
                         self.suppressed_repeat_keys.remove(&key_id);
-                        false
+                        if self.state.mode == Mode::RecentWorkspace {
+                            crate::app::input::handle_recent_workspace_key(
+                                &mut self.state,
+                                key.as_key_event(),
+                            );
+                            true
+                        } else {
+                            false
+                        }
                     }
                 }
             }
@@ -180,6 +190,7 @@ impl App {
             crate::raw_input::RawInputEvent::Unsupported => false,
         };
         self.sync_prefix_input_source(previous_mode);
+        self.sync_modifier_key_reporting(previous_mode);
         self.shutdown_detached_terminal_runtimes();
         changed
     }

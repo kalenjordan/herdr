@@ -83,6 +83,18 @@ impl App {
             return;
         }
 
+        if let AppEvent::ModifierKeyReporting { enabled } = ev {
+            #[cfg(not(test))]
+            if let Err(err) =
+                crate::input::set_modifier_key_reporting(&mut std::io::stdout(), enabled)
+            {
+                tracing::warn!(enabled, %err, "failed to change modifier-key reporting");
+            }
+            #[cfg(test)]
+            let _ = enabled;
+            return;
+        }
+
         if let AppEvent::GitStatusRefreshed {
             results,
             cache_updates,

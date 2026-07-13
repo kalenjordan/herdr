@@ -1,7 +1,8 @@
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
-    text::Span,
+    text::{Line, Span},
+    widgets::{Block, Borders, Clear, Paragraph},
     Frame,
 };
 
@@ -56,6 +57,7 @@ use self::status::{
     toast_notification_rect,
 };
 use self::tabs::render_tab_bar;
+use self::widgets::panel_contrast_fg;
 pub(crate) use self::{
     dialogs::{
         confirm_close_button_rects, confirm_close_popup_rect, new_linked_worktree_button_rects,
@@ -453,8 +455,70 @@ pub fn render_with_runtime_registry(
         Mode::GlobalMenu => render_global_launcher_menu(app, frame),
         Mode::KeybindHelp => render_keybind_help_overlay(app, frame),
         Mode::Navigator => render_navigator_overlay(app, terminal_runtimes, frame),
+        Mode::RecentWorkspace => render_recent_workspace_overlay(app, terminal_runtimes, frame),
         Mode::Terminal => {}
     }
+}
+
+fn render_recent_workspace_overlay(
+    app: &AppState,
+    terminal_runtimes: &TerminalRuntimeRegistry,
+    frame: &mut Frame,
+) {
+    let Some(state) = &app.recent_workspace else {
+        return;
+    };
+    let labels: Vec<_> = state
+        .candidates
+        .iter()
+        .filter_map(|id| app.workspaces.iter().find(|ws| &ws.id == id))
+        .map(|ws| ws.display_name_from(&app.terminals, terminal_runtimes))
+        .collect();
+    if labels.is_empty() {
+        return;
+    }
+    let width = labels
+        .iter()
+        .map(|label| text::display_width_u16(label))
+        .max()
+        .unwrap_or(1)
+        .saturating_add(4)
+        .clamp(36, 80);
+    let height = (labels.len() as u16)
+        .saturating_add(2)
+        .max(8)
+        .min(frame.area().height);
+    let Some(area) = centered_popup_rect(frame.area(), width, height) else {
+        return;
+    };
+    let lines: Vec<_> = labels
+        .into_iter()
+        .enumerate()
+        .map(|(idx, label)| {
+            let style = if idx == state.selected {
+                Style::default()
+                    .fg(panel_contrast_fg(&app.palette))
+                    .bg(app.palette.accent)
+            } else {
+                Style::default().fg(app.palette.text)
+            };
+            Line::styled(format!(" {label}"), style)
+        })
+        .chain(std::iter::once(Line::styled(
+            " release cmd to switch",
+            Style::default().fg(app.palette.overlay0),
+        )))
+        .collect();
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" recent workspaces ")
+                .style(Style::default().bg(app.palette.panel_bg)),
+        ),
+        area,
+    );
 }
 
 fn render_notifications(app: &AppState, frame: &mut Frame, terminal_area: Rect) {
@@ -1287,6 +1351,38 @@ mod tests {
             .collect::<String>()
             .trim_end()
             .to_string()
+    }
+
+    #[test]
+    fn recent_workspace_overlay_resolves_current_workspace_names() {
+        let mut app = crate::app::state::AppState::test_new();
+        let mut current = Workspace::test_new("current");
+        current.set_custom_name("Current".into());
+        let mut recent = Workspace::test_new("old-name");
+        recent.set_custom_name("Renamed workspace".into());
+        let current_id = current.id.clone();
+        let recent_id = recent.id.clone();
+        app.workspaces = vec![current, recent];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::RecentWorkspace;
+        app.recent_workspace = Some(crate::app::state::RecentWorkspaceState {
+            original_workspace_id: current_id,
+            candidates: vec![recent_id],
+            selected: 0,
+        });
+        let area = Rect::new(0, 0, 60, 16);
+        compute_view(&mut app, area);
+        let backend = TestBackend::new(area.width, area.height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(&app, frame)).unwrap();
+
+        let text = (0..area.height)
+            .map(|row| buffer_row_text(terminal.backend().buffer(), area, row))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("Renamed workspace"), "screen: {text}");
+        assert!(!text.contains("old-name"), "screen: {text}");
     }
 
     fn temp_git_repo(branch: &str) -> std::path::PathBuf {

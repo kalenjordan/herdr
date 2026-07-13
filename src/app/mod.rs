@@ -500,6 +500,8 @@ impl App {
         let (theme_palette, theme_name) = resolve_effective_theme(&theme_runtime, None);
 
         let mut state = AppState {
+            recent_workspace_ids: Vec::new(),
+            recent_workspace: None,
             terminals: std::collections::HashMap::new(),
             direct_attach_resize_locks: std::collections::HashSet::new(),
             pane_id_aliases: std::collections::HashMap::new(),
@@ -852,6 +854,23 @@ impl App {
         }
     }
 
+    pub(crate) fn sync_modifier_key_reporting(&mut self, previous_mode: Mode) {
+        let enabled = match (
+            previous_mode == Mode::RecentWorkspace,
+            self.state.mode == Mode::RecentWorkspace,
+        ) {
+            (false, true) => true,
+            (true, false) => false,
+            _ => return,
+        };
+        if let Err(err) = self
+            .event_tx
+            .try_send(crate::events::AppEvent::ModifierKeyReporting { enabled })
+        {
+            tracing::warn!(enabled, %err, "failed to queue modifier-key reporting change");
+        }
+    }
+
     pub(crate) fn handle_internal_event_with_prefix_sync(
         &mut self,
         event: crate::events::AppEvent,
@@ -859,6 +878,7 @@ impl App {
         let previous_mode = self.state.mode;
         self.handle_internal_event(event);
         self.sync_prefix_input_source(previous_mode);
+        self.sync_modifier_key_reporting(previous_mode);
     }
 
     #[cfg(test)]
@@ -1562,6 +1582,12 @@ impl App {
                         }
                         crossterm::event::KeyEventKind::Release => {
                             self.suppressed_repeat_keys.remove(&key_id);
+                            if self.state.mode == Mode::RecentWorkspace {
+                                input::handle_recent_workspace_key(
+                                    &mut self.state,
+                                    key.as_key_event(),
+                                );
+                            }
                         }
                     }
                 }
@@ -1617,6 +1643,7 @@ impl App {
                 crate::raw_input::RawInputEvent::Unsupported => {}
             }
             self.sync_prefix_input_source(previous_mode);
+            self.sync_modifier_key_reporting(previous_mode);
         }
     }
 
@@ -1687,6 +1714,9 @@ impl App {
             Mode::Navigator => {
                 input::handle_navigator_key(&mut self.state, &self.terminal_runtimes, key_event);
             }
+            Mode::RecentWorkspace => {
+                input::handle_recent_workspace_key(&mut self.state, key_event);
+            }
             Mode::Terminal => {
                 // Should not be called in terminal mode.
             }
@@ -1710,7 +1740,7 @@ mod tests {
     use crate::detect::{Agent, AgentState};
     use crate::terminal::TerminalRuntime;
     use crate::workspace::Workspace;
-    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKeyCode};
     use std::cell::Cell;
     use std::rc::Rc;
     use std::sync::Mutex;
@@ -1732,6 +1762,39 @@ mod tests {
             scroll: 0,
             preview: true,
         }
+    }
+
+    #[tokio::test]
+    async fn recent_workspace_commits_on_super_release_but_not_e_release() {
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("one"), Workspace::test_new("two")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        let target = app.state.workspaces[1].id.clone();
+        app.state.recent_workspace = Some(state::RecentWorkspaceState {
+            original_workspace_id: app.state.workspaces[0].id.clone(),
+            candidates: vec![target],
+            selected: 0,
+        });
+        app.state.mode = Mode::RecentWorkspace;
+
+        app.handle_raw_input_event(raw_key(
+            KeyCode::Char('e'),
+            KeyModifiers::SUPER,
+            KeyEventKind::Release,
+        ))
+        .await;
+        assert_eq!(app.state.active, Some(0));
+        assert_eq!(app.state.mode, Mode::RecentWorkspace);
+
+        app.handle_raw_input_event(raw_key(
+            KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+            KeyModifiers::empty(),
+            KeyEventKind::Release,
+        ))
+        .await;
+        assert_eq!(app.state.active, Some(1));
+        assert_eq!(app.state.mode, Mode::Terminal);
     }
 
     fn test_app() -> App {
@@ -1812,6 +1875,29 @@ mod tests {
             }
         }
         out
+    }
+
+    fn drained_modifier_reporting(app: &mut App) -> Vec<bool> {
+        let mut out = Vec::new();
+        while let Ok(ev) = app.event_rx.try_recv() {
+            if let crate::events::AppEvent::ModifierKeyReporting { enabled } = ev {
+                out.push(enabled);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn recent_workspace_mode_scopes_modifier_key_reporting() {
+        let mut app = test_app();
+
+        app.state.mode = Mode::RecentWorkspace;
+        app.sync_modifier_key_reporting(Mode::Terminal);
+        assert_eq!(drained_modifier_reporting(&mut app), vec![true]);
+
+        app.state.mode = Mode::Terminal;
+        app.sync_modifier_key_reporting(Mode::RecentWorkspace);
+        assert_eq!(drained_modifier_reporting(&mut app), vec![false]);
     }
 
     #[test]

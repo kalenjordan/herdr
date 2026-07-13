@@ -1850,6 +1850,12 @@ impl HeadlessServer {
                 });
                 true
             }
+            AppEvent::ModifierKeyReporting { enabled } => {
+                self.send_to_foreground_client(ServerMessage::ModifierKeyReporting {
+                    enabled: *enabled,
+                });
+                true
+            }
             AppEvent::StateChanged { pane_id, agent, .. } => {
                 // Capture toast before handling.
                 let toast_before = self.app.state.toast.clone();

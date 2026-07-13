@@ -135,6 +135,9 @@ pub enum AppEvent {
     /// restore (`active = false`): the client in server mode (via server forwarding), the
     /// app itself in monolithic mode.
     PrefixInputSource { active: bool },
+    /// Request standalone modifier-key events from the foreground terminal client.
+    /// Used only while an interaction needs to observe modifier release.
+    ModifierKeyReporting { enabled: bool },
     /// A pane child reported its shell current directory through terminal
     /// metadata such as OSC 7.
     TerminalCwdReported {

@@ -50,6 +50,40 @@ pub fn ime_compatible_keyboard_enhancement_flags() -> KeyboardEnhancementFlags {
         | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
 }
 
+#[cfg(not(windows))]
+pub fn modifier_key_reporting_flags() -> KeyboardEnhancementFlags {
+    ime_compatible_keyboard_enhancement_flags()
+        | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+}
+
+#[cfg(not(windows))]
+pub fn set_modifier_key_reporting(
+    writer: &mut impl std::io::Write,
+    enabled: bool,
+) -> std::io::Result<()> {
+    use crossterm::event::{PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags};
+    use crossterm::execute;
+
+    let flags = if enabled {
+        modifier_key_reporting_flags()
+    } else {
+        ime_compatible_keyboard_enhancement_flags()
+    };
+    execute!(
+        writer,
+        PopKeyboardEnhancementFlags,
+        PushKeyboardEnhancementFlags(flags)
+    )
+}
+
+#[cfg(windows)]
+pub fn set_modifier_key_reporting(
+    _writer: &mut impl std::io::Write,
+    _enabled: bool,
+) -> std::io::Result<()> {
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModifyOtherKeysMode {
     Mode1,
@@ -172,6 +206,15 @@ mod tests {
         assert!(flags.contains(KeyboardEnhancementFlags::REPORT_EVENT_TYPES));
         assert!(flags.contains(KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS));
         assert!(!flags.contains(KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn modifier_reporting_enables_standalone_modifier_events() {
+        let flags = modifier_key_reporting_flags();
+
+        assert!(flags.contains(KeyboardEnhancementFlags::REPORT_EVENT_TYPES));
+        assert!(flags.contains(KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES));
     }
 
     #[test]

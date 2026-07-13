@@ -115,6 +115,7 @@ impl App {
                 Mode::Navigator => {
                     handle_navigator_key(&mut self.state, &self.terminal_runtimes, key_event)
                 }
+                Mode::RecentWorkspace => handle_recent_workspace_key(&mut self.state, key_event),
                 Mode::Terminal => unreachable!(),
             },
         }
@@ -534,6 +535,27 @@ impl App {
                 Some(std::time::Instant::now() + super::PANE_COPY_HIGHLIGHT_DURATION);
         }
         copied
+    }
+}
+
+pub(crate) fn handle_recent_workspace_key(state: &mut AppState, key: crossterm::event::KeyEvent) {
+    use crossterm::event::{KeyCode, KeyEventKind, ModifierKeyCode};
+
+    match (key.kind, key.code) {
+        (KeyEventKind::Press, KeyCode::Char('e' | 'E')) => {
+            state.cycle_recent_workspace_switcher();
+        }
+        (KeyEventKind::Press, KeyCode::Enter) => {
+            state.commit_recent_workspace_switcher();
+        }
+        (KeyEventKind::Press, KeyCode::Esc) => state.cancel_recent_workspace_switcher(),
+        (
+            KeyEventKind::Release,
+            KeyCode::Modifier(ModifierKeyCode::LeftSuper | ModifierKeyCode::RightSuper),
+        ) => {
+            state.commit_recent_workspace_switcher();
+        }
+        _ => {}
     }
 }
 

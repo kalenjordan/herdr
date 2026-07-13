@@ -1588,6 +1588,10 @@ async fn run_client_loop(
                         prefix_input_source.restore();
                     }
                 }
+                ServerMessage::ModifierKeyReporting { enabled } => {
+                    crate::input::set_modifier_key_reporting(&mut io::stdout(), enabled)
+                        .map_err(ClientError::ConnectionFailed)?;
+                }
                 ServerMessage::Welcome { .. } => {
                     debug!("received unexpected Welcome in main loop");
                 }
