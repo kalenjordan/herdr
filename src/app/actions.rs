@@ -962,11 +962,9 @@ impl AppState {
 
     pub fn switch_workspace(&mut self, idx: usize) {
         if idx < self.workspaces.len() {
-            let previous_workspace_id = self
-                .active
-                .filter(|active| *active != idx)
-                .and_then(|active| self.workspaces.get(active))
-                .map(|ws| ws.id.clone());
+            let previous_target = (self.active != Some(idx))
+                .then(|| self.active_workspace_tab_target())
+                .flatten();
             let previous_focus = self.current_pane_focus_target();
             self.active = Some(idx);
             self.selected = idx;
@@ -985,8 +983,8 @@ impl AppState {
             self.refresh_tab_bar_view();
             self.record_pane_focus_after_navigation(previous_focus);
             self.sync_selection_after_focus_navigation();
-            if let Some(id) = previous_workspace_id {
-                self.record_recent_workspace(id);
+            if let Some(target) = previous_target {
+                self.record_recent_workspace(target);
             }
         }
     }
@@ -1005,13 +1003,11 @@ impl AppState {
 
         let previous_focus = self.current_pane_focus_target();
         let workspace_changed = self.active != Some(ws_idx);
-        let previous_workspace_id = if workspace_changed {
-            self.active
-                .and_then(|active| self.workspaces.get(active))
-                .map(|ws| ws.id.clone())
-        } else {
-            None
-        };
+        let target_changed =
+            workspace_changed || self.workspaces[ws_idx].active_tab_index() != tab_idx;
+        let previous_target = target_changed
+            .then(|| self.active_workspace_tab_target())
+            .flatten();
         self.active = Some(ws_idx);
         self.selected = ws_idx;
         let workspace_id = self.workspaces[ws_idx].id.clone();
@@ -1030,37 +1026,83 @@ impl AppState {
         self.refresh_tab_bar_view();
         self.record_pane_focus_after_navigation(previous_focus);
         self.sync_selection_after_focus_navigation();
-        if let Some(id) = previous_workspace_id {
-            self.record_recent_workspace(id);
+        if let Some(target) = previous_target {
+            self.record_recent_workspace(target);
         }
         true
     }
 
-    fn record_recent_workspace(&mut self, workspace_id: String) {
-        self.recent_workspace_ids.retain(|id| id != &workspace_id);
-        self.recent_workspace_ids.insert(0, workspace_id);
+    fn active_workspace_tab_target(&self) -> Option<crate::app::state::WorkspaceTabTarget> {
+        let ws = self.workspaces.get(self.active?)?;
+        let tab = ws.tabs.get(ws.active_tab_index())?;
+        Some(crate::app::state::WorkspaceTabTarget {
+            workspace_id: ws.id.clone(),
+            tab_number: tab.number,
+        })
+    }
+
+    fn workspace_tab_indices(
+        &self,
+        target: &crate::app::state::WorkspaceTabTarget,
+    ) -> Option<(usize, usize)> {
+        let ws_idx = self
+            .workspaces
+            .iter()
+            .position(|ws| ws.id == target.workspace_id)?;
+        let tab_idx = self.workspaces[ws_idx]
+            .tabs
+            .iter()
+            .position(|tab| tab.number == target.tab_number)?;
+        Some((ws_idx, tab_idx))
+    }
+
+    fn record_recent_workspace(&mut self, target: crate::app::state::WorkspaceTabTarget) {
+        self.recent_workspace_ids.retain(|item| item != &target);
+        self.recent_workspace_ids.insert(0, target);
         self.recent_workspace_ids.truncate(32);
     }
 
     pub(crate) fn open_recent_workspace_switcher(&mut self) -> bool {
-        let Some(active_idx) = self.active else {
-            return false;
-        };
-        let Some(original) = self.workspaces.get(active_idx).map(|ws| ws.id.clone()) else {
-            return false;
-        };
+        let original = self.active_workspace_tab_target();
         let mut candidates: Vec<_> = self
             .recent_workspace_ids
             .iter()
-            .filter(|id| *id != &original && self.workspaces.iter().any(|ws| &ws.id == *id))
+            .filter(|target| {
+                original.as_ref() != Some(*target) && self.workspace_tab_indices(target).is_some()
+            })
             .cloned()
             .collect();
-        if candidates.is_empty() {
-            return false;
+        if !candidates.is_empty() {
+            if let Some(original) = original {
+                candidates.push(original);
+            }
         }
-        candidates.push(original.clone());
         self.recent_workspace = Some(crate::app::state::RecentWorkspaceState {
-            original_workspace_id: original,
+            kind: crate::app::state::WorkspaceSwitcherKind::Recent,
+            candidates,
+            selected: 0,
+        });
+        self.mode = crate::app::state::Mode::RecentWorkspace;
+        true
+    }
+
+    pub(crate) fn open_done_or_blocked_switcher(&mut self) -> bool {
+        let candidates: Vec<_> =
+            self.workspaces
+                .iter()
+                .flat_map(|ws| {
+                    ws.tabs.iter().filter_map(|tab| {
+                        let (state, seen) = tab_aggregate_state(tab, &self.terminals);
+                        ((state == AgentState::Blocked) || (state == AgentState::Idle && !seen))
+                            .then(|| crate::app::state::WorkspaceTabTarget {
+                                workspace_id: ws.id.clone(),
+                                tab_number: tab.number,
+                            })
+                    })
+                })
+                .collect();
+        self.recent_workspace = Some(crate::app::state::RecentWorkspaceState {
+            kind: crate::app::state::WorkspaceSwitcherKind::DoneOrBlocked,
             candidates,
             selected: 0,
         });
@@ -1088,14 +1130,13 @@ impl AppState {
             .and_then(|state| state.candidates.get(state.selected).cloned());
         self.recent_workspace = None;
         self.mode = crate::app::state::Mode::Terminal;
-        let Some(target_id) = target_id else {
+        let Some(target) = target_id else {
             return false;
         };
-        let Some(idx) = self.workspaces.iter().position(|ws| ws.id == target_id) else {
+        let Some((ws_idx, tab_idx)) = self.workspace_tab_indices(&target) else {
             return false;
         };
-        self.switch_workspace(idx);
-        true
+        self.switch_workspace_tab(ws_idx, tab_idx)
     }
 
     pub(crate) fn ensure_workspace_visible(&mut self, idx: usize) {
@@ -1571,11 +1612,11 @@ impl AppState {
             .filter_map(|idx| self.workspaces.get(*idx).map(|ws| ws.id.clone()))
             .collect();
         self.recent_workspace_ids
-            .retain(|id| !closing_workspace_ids.contains(id));
+            .retain(|target| !closing_workspace_ids.contains(&target.workspace_id));
         if let Some(recent) = &mut self.recent_workspace {
             recent
                 .candidates
-                .retain(|id| !closing_workspace_ids.contains(id));
+                .retain(|target| !closing_workspace_ids.contains(&target.workspace_id));
         }
 
         let mut terminal_ids = Vec::new();
@@ -3512,9 +3553,11 @@ impl AppState {
         if should_close_workspace {
             let closed_workspace_id = self.workspaces[ws_idx].id.clone();
             self.recent_workspace_ids
-                .retain(|id| id != &closed_workspace_id);
+                .retain(|target| target.workspace_id != closed_workspace_id);
             if let Some(recent) = &mut self.recent_workspace {
-                recent.candidates.retain(|id| id != &closed_workspace_id);
+                recent
+                    .candidates
+                    .retain(|target| target.workspace_id != closed_workspace_id);
             }
             self.workspaces.remove(ws_idx);
             self.remove_unattached_terminal_ids(workspace_terminal_ids);
@@ -4459,15 +4502,22 @@ mod tests {
 
         assert!(state.open_recent_workspace_switcher());
         let recent = state.recent_workspace.as_ref().unwrap();
-        assert_eq!(recent.candidates, vec![b.clone(), a.clone(), c.clone()]);
+        assert_eq!(
+            recent
+                .candidates
+                .iter()
+                .map(|target| target.workspace_id.clone())
+                .collect::<Vec<_>>(),
+            vec![b.clone(), a.clone(), c.clone()]
+        );
         assert_eq!(state.active, Some(2));
 
         state.cycle_recent_workspace_switcher();
         assert!(state.commit_recent_workspace_switcher());
 
         assert_eq!(state.workspaces[state.active.unwrap()].id, a);
-        assert_eq!(state.recent_workspace_ids[0], c);
-        assert_eq!(state.recent_workspace_ids[1], b);
+        assert_eq!(state.recent_workspace_ids[0].workspace_id, c);
+        assert_eq!(state.recent_workspace_ids[1].workspace_id, b);
     }
 
     #[test]
@@ -4479,13 +4529,24 @@ mod tests {
         state.switch_workspace(2);
         state.workspaces.swap(0, 1);
         state.active = Some(2);
-        state
-            .recent_workspace_ids
-            .insert(0, "closed-workspace".into());
+        state.recent_workspace_ids.insert(
+            0,
+            crate::app::state::WorkspaceTabTarget {
+                workspace_id: "closed-workspace".into(),
+                tab_number: 1,
+            },
+        );
 
         assert!(state.open_recent_workspace_switcher());
         assert_eq!(
-            state.recent_workspace.as_ref().unwrap().candidates,
+            state
+                .recent_workspace
+                .as_ref()
+                .unwrap()
+                .candidates
+                .iter()
+                .map(|target| target.workspace_id.clone())
+                .collect::<Vec<_>>(),
             vec![b, a, state.workspaces[2].id.clone()]
         );
     }
@@ -4508,6 +4569,61 @@ mod tests {
     }
 
     #[test]
+    fn recent_workspace_switcher_tracks_tabs_as_separate_stable_targets() {
+        let mut state = app_with_workspaces(&["one", "two"]);
+        let second_tab = state.workspaces[0].test_add_tab(Some("logs"));
+        state.ensure_test_terminals();
+        let first_tab_number = state.workspaces[0].tabs[0].number;
+        let second_tab_number = state.workspaces[0].tabs[second_tab].number;
+
+        assert!(state.switch_workspace_tab(0, second_tab));
+        assert!(state.switch_workspace_tab(1, 0));
+        assert!(state.open_recent_workspace_switcher());
+
+        let candidates = &state.recent_workspace.as_ref().unwrap().candidates;
+        assert_eq!(candidates[0].tab_number, second_tab_number);
+        assert_eq!(candidates[1].tab_number, first_tab_number);
+        assert!(state.commit_recent_workspace_switcher());
+        assert_eq!(state.active, Some(0));
+        assert_eq!(state.workspaces[0].active_tab, second_tab);
+        state.assert_invariants_for_test();
+    }
+
+    #[test]
+    fn done_or_blocked_switcher_filters_at_tab_granularity() {
+        let mut state = app_with_workspaces(&["one", "two"]);
+        let blocked_tab = state.workspaces[0].test_add_tab(Some("blocked"));
+        state.ensure_test_terminals();
+        let blocked_pane = state.workspaces[0].tabs[blocked_tab].root_pane;
+        let done_pane = state.workspaces[1].tabs[0].root_pane;
+        set_agent_state(
+            &mut state,
+            0,
+            blocked_tab,
+            blocked_pane,
+            AgentState::Blocked,
+        );
+        set_agent_state(&mut state, 1, 0, done_pane, AgentState::Idle);
+        state.workspaces[1].tabs[0]
+            .panes
+            .get_mut(&done_pane)
+            .unwrap()
+            .seen = false;
+
+        assert!(state.open_done_or_blocked_switcher());
+        let candidates = &state.recent_workspace.as_ref().unwrap().candidates;
+
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].workspace_id, state.workspaces[0].id);
+        assert_eq!(
+            candidates[0].tab_number,
+            state.workspaces[0].tabs[blocked_tab].number
+        );
+        assert_eq!(candidates[1].workspace_id, state.workspaces[1].id);
+        state.assert_invariants_for_test();
+    }
+
+    #[test]
     fn recent_workspace_switcher_cancel_preserves_focus_and_history() {
         let mut state = app_with_workspaces(&["a", "b"]);
         state.switch_workspace(1);
@@ -4526,13 +4642,36 @@ mod tests {
         let mut state = app_with_workspaces(&["a", "b"]);
         let closed_id = state.workspaces[0].id.clone();
         state.switch_workspace(1);
-        assert_eq!(state.recent_workspace_ids, vec![closed_id.clone()]);
+        assert_eq!(state.recent_workspace_ids[0].workspace_id, closed_id);
         state.selected = 0;
 
         state.close_selected_workspace();
 
-        assert!(!state.recent_workspace_ids.contains(&closed_id));
-        assert!(!state.open_recent_workspace_switcher());
+        assert!(state.recent_workspace_ids.is_empty());
+        assert!(state.open_recent_workspace_switcher());
+        assert!(state
+            .recent_workspace
+            .as_ref()
+            .unwrap()
+            .candidates
+            .is_empty());
+    }
+
+    #[test]
+    fn done_or_blocked_switcher_opens_when_empty() {
+        let mut state = app_with_workspaces(&["active"]);
+        state.ensure_test_terminals();
+        let pane = state.workspaces[0].tabs[0].root_pane;
+        set_agent_state(&mut state, 0, 0, pane, AgentState::Working);
+
+        assert!(state.open_done_or_blocked_switcher());
+        assert!(state
+            .recent_workspace
+            .as_ref()
+            .unwrap()
+            .candidates
+            .is_empty());
+        assert_eq!(state.mode, Mode::RecentWorkspace);
     }
 
     #[test]

@@ -471,15 +471,34 @@ fn render_recent_workspace_overlay(
     let labels: Vec<_> = state
         .candidates
         .iter()
-        .filter_map(|id| app.workspaces.iter().find(|ws| &ws.id == id))
-        .map(|ws| ws.display_name_from(&app.terminals, terminal_runtimes))
+        .filter_map(|target| {
+            let ws = app
+                .workspaces
+                .iter()
+                .find(|ws| ws.id == target.workspace_id)?;
+            let tab_idx = ws
+                .tabs
+                .iter()
+                .position(|tab| tab.number == target.tab_number)?;
+            let workspace = ws.display_name_from(&app.terminals, terminal_runtimes);
+            let tab = ws.tab_display_name(tab_idx)?;
+            Some(if ws.tabs.len() > 1 {
+                format!("{workspace} · {tab}")
+            } else {
+                workspace
+            })
+        })
         .collect();
-    if labels.is_empty() {
-        return;
-    }
+    let empty_message = match state.kind {
+        crate::app::state::WorkspaceSwitcherKind::Recent => "no recent tabs to switch to",
+        crate::app::state::WorkspaceSwitcherKind::DoneOrBlocked => {
+            "no done or blocked tabs to switch to"
+        }
+    };
     let width = labels
         .iter()
         .map(|label| text::display_width_u16(label))
+        .chain(std::iter::once(text::display_width_u16(empty_message)))
         .max()
         .unwrap_or(1)
         .saturating_add(4)
@@ -491,21 +510,36 @@ fn render_recent_workspace_overlay(
     let Some(area) = centered_popup_rect(frame.area(), width, height) else {
         return;
     };
-    let lines: Vec<_> = labels
+    let is_empty = labels.is_empty();
+    let content = if is_empty {
+        vec![Line::styled(
+            format!(" {empty_message}"),
+            Style::default().fg(app.palette.overlay0),
+        )]
+    } else {
+        labels
+            .into_iter()
+            .enumerate()
+            .map(|(idx, label)| {
+                let style = if idx == state.selected {
+                    Style::default()
+                        .fg(panel_contrast_fg(&app.palette))
+                        .bg(app.palette.accent)
+                } else {
+                    Style::default().fg(app.palette.text)
+                };
+                Line::styled(format!(" {label}"), style)
+            })
+            .collect()
+    };
+    let lines: Vec<_> = content
         .into_iter()
-        .enumerate()
-        .map(|(idx, label)| {
-            let style = if idx == state.selected {
-                Style::default()
-                    .fg(panel_contrast_fg(&app.palette))
-                    .bg(app.palette.accent)
-            } else {
-                Style::default().fg(app.palette.text)
-            };
-            Line::styled(format!(" {label}"), style)
-        })
         .chain(std::iter::once(Line::styled(
-            " release cmd to switch",
+            if is_empty {
+                " release cmd to close"
+            } else {
+                " release cmd to switch"
+            },
             Style::default().fg(app.palette.overlay0),
         )))
         .collect();
@@ -514,7 +548,12 @@ fn render_recent_workspace_overlay(
         Paragraph::new(lines).block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" recent workspaces ")
+                .title(match state.kind {
+                    crate::app::state::WorkspaceSwitcherKind::Recent => " recent tabs ",
+                    crate::app::state::WorkspaceSwitcherKind::DoneOrBlocked => {
+                        " done or blocked tabs "
+                    }
+                })
                 .style(Style::default().bg(app.palette.panel_bg)),
         ),
         area,
@@ -1360,15 +1399,18 @@ mod tests {
         current.set_custom_name("Current".into());
         let mut recent = Workspace::test_new("old-name");
         recent.set_custom_name("Renamed workspace".into());
-        let current_id = current.id.clone();
         let recent_id = recent.id.clone();
+        let recent_tab_number = recent.tabs[0].number;
         app.workspaces = vec![current, recent];
         app.active = Some(0);
         app.selected = 0;
         app.mode = Mode::RecentWorkspace;
         app.recent_workspace = Some(crate::app::state::RecentWorkspaceState {
-            original_workspace_id: current_id,
-            candidates: vec![recent_id],
+            kind: crate::app::state::WorkspaceSwitcherKind::Recent,
+            candidates: vec![crate::app::state::WorkspaceTabTarget {
+                workspace_id: recent_id,
+                tab_number: recent_tab_number,
+            }],
             selected: 0,
         });
         let area = Rect::new(0, 0, 60, 16);
@@ -1383,6 +1425,32 @@ mod tests {
             .join("\n");
         assert!(text.contains("Renamed workspace"), "screen: {text}");
         assert!(!text.contains("old-name"), "screen: {text}");
+    }
+
+    #[test]
+    fn workspace_switcher_overlay_explains_an_empty_candidate_list() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.mode = Mode::RecentWorkspace;
+        app.recent_workspace = Some(crate::app::state::RecentWorkspaceState {
+            kind: crate::app::state::WorkspaceSwitcherKind::DoneOrBlocked,
+            candidates: Vec::new(),
+            selected: 0,
+        });
+        let area = Rect::new(0, 0, 60, 16);
+        compute_view(&mut app, area);
+        let backend = TestBackend::new(area.width, area.height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(&app, frame)).unwrap();
+
+        let text = (0..area.height)
+            .map(|row| buffer_row_text(terminal.backend().buffer(), area, row))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            text.contains("no done or blocked tabs to switch to"),
+            "screen: {text}"
+        );
+        assert!(text.contains("release cmd to close"), "screen: {text}");
     }
 
     fn temp_git_repo(branch: &str) -> std::path::PathBuf {

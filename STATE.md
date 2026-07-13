@@ -1,87 +1,95 @@
 # Current objective
 
-Maintain Kalen's Herdr fork on `master`. The Command-E recent-workspace
-switcher is implemented and live-validated.
+Finish and live-validate tab-aware Command-E and Command-D switchers, then
+commit the accepted Herdr changes on Kalen's fork `master` when requested.
 
-# Current repository state
+# Repository state
 
-- Checkout: `/Users/kalen/repos/herdr`, branch `master`.
-- `master` is three committed changes ahead of `origin/master`:
-  - `523f075 feat: show repository dirty file count`
-  - `d984e46 docs: add local notification workflow`
-  - `7936006 docs: update development checkpoint`
-- The MRU feature is ready to commit directly on fork `master`. It has not
-  been pushed.
+- Checkout: `/Users/kalen/repos/herdr`, branch `master`, four commits ahead of
+  `origin/master`.
+- Latest commit: `f088b4e feat: add recent workspace switcher`.
+- The tab-aware extension is uncommitted. Modified Herdr files are the next
+  changelog/config docs/API schema, switcher state/actions/input/render/config,
+  and protocol expectation tests shown by `git status`.
+- No push, upstream PR, or release is authorized. Until pushed to fork
+  `master`, the local commits and live build are not upgrade-safe.
+- The separate dotfiles repo has pre-existing unrelated modifications. This
+  task additionally changes only `ghostty/config.ghostty`; preserve all other
+  dotfiles changes.
 
-# Implemented MRU behavior
+# Implemented behavior
 
-- `keys.recent_workspace` defaults to `cmd+e` and is a configurable direct
-  action. Existing positional previous/next workspace actions are unchanged.
-- First Command-E opens a name-only overlay and selects the most
-  recently left workspace without changing focus.
-- Further discrete E presses cycle and wrap, including back to the current
-  workspace. Repeat events are suppressed.
-- Left or right Super release commits. Enter commits as a fallback. Escape
-  cancels without changing focus or history.
-- History is a bounded in-memory list of stable workspace IDs. It is not added
-  to the protocol or persisted session snapshot. A full restart therefore
-  clears history and Command-E is a no-op until a workspace transition occurs.
-- Workspace names resolve at render time. Reorder does not alter MRU order;
-  closing a workspace removes it; stale IDs are defensively skipped.
-- User-facing configuration docs and the next changelog are updated.
-- The overlay is 36 to 80 columns wide, has an eight-row minimum height, and
-  displays only the `release cmd to switch` hint.
-- Standalone modifier reporting is enabled only while the overlay is active,
-  preserving IME-safe keyboard reporting otherwise. This adds protocol 17.
+- Command-E is now tab-aware. MRU entries use stable workspace ID + non-reused
+  public tab number, so tabs within one workspace are independently navigable
+  and tab reorder/rename is safe.
+- Command-D (`keys.done_or_blocked_workspace`) opens the same hold-to-cycle
+  overlay filtered to tabs containing a blocked agent or unseen idle/done
+  agent. It defaults to `cmd+d`.
+- Multi-tab labels render as `workspace · tab`; single-tab workspaces retain
+  the workspace-only label. Releasing Command commits, matching Command-E.
+- The existing scoped standalone-modifier reporting remains active only while
+  the switcher is open. Protocol remains 17.
+- Local Herdr config now explicitly includes
+  `done_or_blocked_workspace = "cmd+d"`; `herdr server reload-config` returned
+  `status: applied` with no diagnostics.
+- The optimized build is installed at `~/.local/bin/herdr` and a safe
+  installed-path live handoff completed on protocol 17.
 
-# Live state and operational decisions
+# Ghostty conflict and unresolved live test
 
-- The optimized feature build is installed at `/Users/kalen/.local/bin/herdr`.
-- The running server reports version `0.7.3`, protocol `17`, and compatible.
-- Safe local testing workflow is: build release, atomically replace
-  `~/.local/bin/herdr`, then hand off with that same installed path. Never hand
-  directly to `target/debug/herdr`: reconnecting clients race the importer,
-  start the installed server, and restore fresh panes, disrupting Codex
-  sessions.
-- The latest normal-path handoff transferred 30 panes without replacement pane
-  spawning or rollback.
-- Kalen's local config previously had `last_pane = "cmd+e"`, which displaced
-  the new default. It is now reloaded with:
-
-  ```toml
-  last_pane = ""
-  recent_workspace = "cmd+e"
-  ```
+- Ghostty intercepted Command-D before Herdr. Its tracked config previously
+  translated it to `text:\x02gd`, which opened the full Herdr Navigator with
+  the done filter. The screenshot confirmed that behavior.
+- Ghostty's built-in Command-D is `new_split:right`. Changing the override to
+  `unbind` resulted in no Herdr action.
+- Current uncommitted dotfiles change is:
+  `keybind = super+d=text:\x1b[100;9u`, an explicit Kitty Super-D press event.
+  `ghostty +show-config` confirms that effective binding.
+- Kalen must reload Ghostty with Command-Shift-Comma and test Command-D. It is
+  not yet confirmed whether standalone Command release is delivered after the
+  synthetic press. Do not commit either repo until this interaction is
+  accepted and commit scope/messages are aligned.
 
 # Verification
 
-- `ZIG=/opt/homebrew/Cellar/zig@0.15/0.15.2/bin/zig cargo test --quiet`
-  passed all 2,507 core tests. The subsequent `api_ping` integration target had
-  the known repeated timeout in
-  `events_subscribe_streams_output_and_agent_status_events` (10 of 11 passed).
-- Focused MRU, release routing, config, close/reorder, cancellation, and rename
-  rendering tests passed.
-- `python3 -m unittest scripts.test_agent_detection_manifest_check scripts.test_changelog scripts.test_docs_translation_parity scripts.test_preview scripts.test_vendor_libghostty_vt scripts.test_vendor_portable_pty`
-  passed 64 tests.
-- `cargo build --release --locked` passed with Zig 0.15.2.
-- `cargo fmt --all -- --check` and `git diff --check` passed.
-- Full clippy is blocked by an unrelated existing warning at the current
-  `src/app/actions.rs` token-span chain: redundant `.into_iter()`.
-- `just check` was not run because `just` is unavailable.
+- `ZIG=/opt/homebrew/Cellar/zig@0.15/0.15.2/bin/zig cargo test --quiet`:
+  all 2,514 core tests passed. The `api_ping` integration target then had 9/11
+  pass: the known `events_subscribe_streams_output_and_agent_status_events`
+  timeout recurred, and a protocol-16 expectation failed.
+- The protocol expectation was updated to 17. Focused
+  `cargo test --quiet --test api_ping ping_over_socket_returns_version` passed.
+- `HERDR_UPDATE_API_SCHEMA=1 ... cargo test --quiet generated_protocol_schema_artifact_is_current`
+  passed and updated `docs/next/api/herdr-api.schema.json` to protocol 17.
+- Focused recent-workspace and done-or-blocked tests passed, including stable
+  tab identity, exact tab activation, filtering, modifier routing, and state
+  invariants.
+- `cargo fmt --all`, `git diff --check`, and the optimized release build with
+  Zig 0.15.2 passed.
+- A filtered `cli_wrapper` command matched zero tests; those protocol-17
+  expectations compile but have not been run under their exact test name.
+- `just check` remains unavailable because `just` is not installed.
 
 # Remaining work
 
-1. Commit the accepted MRU feature on fork `master`.
-2. Decide whether to replace terminal Control-D/EOF with a separate switcher
-   filtered to workspaces containing done or blocked agents.
-3. No upstream PR, push, or release is authorized.
+1. Reload Ghostty and live-test Command-D press, repeated D cycling, and
+   Command release. Also verify Command-E lists Commerce Leak's two tabs
+   separately and activates the selected tab.
+2. If synthetic Command-D opens but release does not commit, determine the
+   Ghostty release-sequence mapping or choose a non-conflicting native chord.
+3. Rerun focused tests after any fix, then build/install and perform the known
+   safe handoff using `~/.local/bin/herdr` as both installed and import path.
+4. When Kalen requests commits, propose lowercase conventional messages. The
+   Herdr and dotfiles changes are separate repositories and should be committed
+   separately. Do not push without explicit authorization.
 
 # Important files
 
-- Plan: `.local/prd/recent-workspace-switcher.md`
-- MRU state/actions: `src/app/state.rs`, `src/app/actions.rs`
-- Input routing: `src/app/input/mod.rs`, `src/app/input/navigate.rs`,
-  `src/app/runtime.rs`, `src/app/mod.rs`
-- Configuration: `src/config/model.rs`, `src/config/keybinds.rs`, `src/main.rs`
+- Switcher state/actions: `src/app/state.rs`, `src/app/actions.rs`
+- Input/config: `src/app/input/mod.rs`, `src/app/input/navigate.rs`,
+  `src/config/model.rs`, `src/config/keybinds.rs`, `src/main.rs`
 - Rendering: `src/ui.rs`
-- Local config: `~/.config/herdr/config.toml`
+- Next docs/schema: `docs/next/CHANGELOG.md`,
+  `docs/next/website/src/content/docs/configuration.mdx`,
+  `docs/next/api/herdr-api.schema.json`
+- Local Herdr config: `~/.config/herdr/config.toml`
+- Ghostty config: `/Users/kalen/repos/dotfiles/ghostty/config.ghostty`

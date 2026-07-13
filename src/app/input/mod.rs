@@ -542,7 +542,15 @@ pub(crate) fn handle_recent_workspace_key(state: &mut AppState, key: crossterm::
     use crossterm::event::{KeyCode, KeyEventKind, ModifierKeyCode};
 
     match (key.kind, key.code) {
-        (KeyEventKind::Press, KeyCode::Char('e' | 'E')) => {
+        (KeyEventKind::Press, KeyCode::Char(ch))
+            if state.recent_workspace.as_ref().is_some_and(|switcher| {
+                matches!(
+                    (switcher.kind, ch.to_ascii_lowercase()),
+                    (crate::app::state::WorkspaceSwitcherKind::Recent, 'e')
+                        | (crate::app::state::WorkspaceSwitcherKind::DoneOrBlocked, 'd')
+                )
+            }) =>
+        {
             state.cycle_recent_workspace_switcher();
         }
         (KeyEventKind::Press, KeyCode::Enter) => {

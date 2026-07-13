@@ -186,6 +186,7 @@ zoom = "prefix+z"
 resize_mode = "prefix+r"
 toggle_sidebar = "prefix+b"
 recent_workspace = "cmd+e"
+done_or_blocked_workspace = "cmd+d"
 ```
 
 Optional actions are unset by default. Bind them with `prefix+` for prefix-mode behavior, or with an explicit modified chord when you intentionally want a direct shortcut:
@@ -203,6 +204,8 @@ next_tab = ["prefix+n", "ctrl+alt+]"]
 `last_pane` switches back to the last focused pane across workspaces and tabs. It is unset by default because the tmux-style pane binding `prefix+l` is already used for pane-right focus.
 
 `recent_workspace` opens a most-recently-used workspace overlay. Press the shortcut again while holding Command to cycle, then release Command to switch. `esc` cancels and `enter` switches immediately for terminals that do not report modifier release.
+
+`done_or_blocked_workspace` opens the same switcher filtered to tabs containing a done or blocked agent. Press Command-D again to cycle, then release Command to switch.
 
 `remote_image_paste` is only active in `herdr --remote`. It is the local-client shortcut that sends a local clipboard image to the remote pane. Set it to an empty string to disable the raw-key shortcut; remote terminal paste-image signals still work when the outer terminal sends them.
 

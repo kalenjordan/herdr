@@ -274,6 +274,9 @@ impl App {
             NavigateAction::RecentWorkspace => {
                 self.state.open_recent_workspace_switcher();
             }
+            NavigateAction::DoneOrBlockedWorkspace => {
+                self.state.open_done_or_blocked_switcher();
+            }
             NavigateAction::NextWorkspace => {
                 if let Some(ws_idx) = self.relative_visible_workspace(1) {
                     self.focus_workspace_idx_via_api(ws_idx);
@@ -1292,6 +1295,7 @@ pub(crate) enum NavigateAction {
     WorkspacePicker,
     PreviousWorkspace,
     RecentWorkspace,
+    DoneOrBlockedWorkspace,
     NextWorkspace,
     PreviousAgent,
     NextAgent,
@@ -1426,6 +1430,10 @@ fn non_indexed_action_for_key(
         (&kb.close_workspace, NavigateAction::CloseWorkspace),
         (&kb.previous_workspace, NavigateAction::PreviousWorkspace),
         (&kb.recent_workspace, NavigateAction::RecentWorkspace),
+        (
+            &kb.done_or_blocked_workspace,
+            NavigateAction::DoneOrBlockedWorkspace,
+        ),
         (&kb.next_workspace, NavigateAction::NextWorkspace),
         (&kb.previous_agent, NavigateAction::PreviousAgent),
         (&kb.next_agent, NavigateAction::NextAgent),
@@ -1601,6 +1609,9 @@ pub(super) fn execute_navigate_action_in_context(
         }
         NavigateAction::RecentWorkspace => {
             state.open_recent_workspace_switcher();
+        }
+        NavigateAction::DoneOrBlockedWorkspace => {
+            state.open_done_or_blocked_switcher();
         }
         NavigateAction::NextWorkspace => {
             state.next_workspace();
@@ -1859,6 +1870,17 @@ mod tests {
         );
 
         assert_eq!(action, Some(NavigateAction::RecentWorkspace));
+    }
+
+    #[test]
+    fn command_d_is_the_default_done_or_blocked_workspace_binding() {
+        let state = AppState::test_new();
+        let action = terminal_direct_non_indexed_navigation_action(
+            &state,
+            TerminalKey::new(KeyCode::Char('d'), KeyModifiers::SUPER),
+        );
+
+        assert_eq!(action, Some(NavigateAction::DoneOrBlockedWorkspace));
     }
 
     fn mark_worktree_space_member(state: &mut AppState, ws_idx: usize, key: &str) {

@@ -315,6 +315,7 @@ pub struct Keybinds {
     pub open_notification_target: ActionKeybinds,
     pub previous_workspace: ActionKeybinds,
     pub recent_workspace: ActionKeybinds,
+    pub done_or_blocked_workspace: ActionKeybinds,
     pub next_workspace: ActionKeybinds,
     pub previous_agent: ActionKeybinds,
     pub next_agent: ActionKeybinds,
@@ -478,6 +479,7 @@ impl Config {
             open_notification_target: empty_action!(),
             previous_workspace: empty_action!(),
             recent_workspace: empty_action!(),
+            done_or_blocked_workspace: empty_action!(),
             next_workspace: empty_action!(),
             previous_agent: empty_action!(),
             next_agent: empty_action!(),
@@ -605,6 +607,11 @@ impl Config {
             );
             apply_action!(keybinds.previous_workspace, previous_workspace, source);
             apply_action!(keybinds.recent_workspace, recent_workspace, source);
+            apply_action!(
+                keybinds.done_or_blocked_workspace,
+                done_or_blocked_workspace,
+                source
+            );
             apply_action!(keybinds.next_workspace, next_workspace, source);
             apply_action!(keybinds.previous_agent, previous_agent, source);
             apply_action!(keybinds.next_agent, next_agent, source);

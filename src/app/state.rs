@@ -771,9 +771,21 @@ pub enum Mode {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecentWorkspaceState {
-    pub original_workspace_id: String,
-    pub candidates: Vec<String>,
+    pub kind: WorkspaceSwitcherKind,
+    pub candidates: Vec<WorkspaceTabTarget>,
     pub selected: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceSwitcherKind {
+    Recent,
+    DoneOrBlocked,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct WorkspaceTabTarget {
+    pub workspace_id: String,
+    pub tab_number: usize,
 }
 
 impl Mode {
@@ -1322,8 +1334,8 @@ pub(crate) struct PaneFocusTarget {
 /// All application state — pure data, no channels or async runtime.
 /// Testable without PTYs or a tokio runtime.
 pub struct AppState {
-    /// Most recently left workspace IDs, newest first. Client navigation state only.
-    pub recent_workspace_ids: Vec<String>,
+    /// Most recently left workspace/tab targets, newest first. Client navigation state only.
+    pub recent_workspace_ids: Vec<WorkspaceTabTarget>,
     pub recent_workspace: Option<RecentWorkspaceState>,
     pub terminals:
         std::collections::HashMap<crate::terminal::TerminalId, crate::terminal::TerminalState>,

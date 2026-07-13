@@ -1772,8 +1772,11 @@ mod tests {
         app.state.selected = 0;
         let target = app.state.workspaces[1].id.clone();
         app.state.recent_workspace = Some(state::RecentWorkspaceState {
-            original_workspace_id: app.state.workspaces[0].id.clone(),
-            candidates: vec![target],
+            kind: state::WorkspaceSwitcherKind::Recent,
+            candidates: vec![state::WorkspaceTabTarget {
+                workspace_id: target,
+                tab_number: app.state.workspaces[1].tabs[0].number,
+            }],
             selected: 0,
         });
         app.state.mode = Mode::RecentWorkspace;
