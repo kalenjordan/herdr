@@ -17,6 +17,8 @@ These instructions are layered.
   VM setup, for example when `/home/can/Projects/herdr`, `HERDR_ENV=1`, or the
   `windows-wirt` SSH alias exists. If those facts are not true, skip local
   machine workflow.
+- Local Kalen machine workflow applies only when the checkout is under
+  `/Users/kalen/`.
 - External contributor guardrail applies whenever the acting GitHub account is
   not `ogulcancelik`, the work is happening in a fork, or the account cannot be
   determined.
@@ -131,6 +133,17 @@ After validation, leave `C:\work\repo` clean. Remove temporary files and delete
 `C:\work\repo\target` when disk space is tight, but keep the shared Cargo and
 Rustup caches. Unless Can explicitly asks to keep the patched tree for more
 manual testing, reset `C:\work\repo` back to a clean checkout before finishing.
+
+## Local Kalen Machine Workflow
+
+When Kalen says "disable notifications," set
+`HERDR_FOCUS_NOTIFY_ENABLED=0` in
+`~/.config/herdr/plugins/config/herdr-focus-notify/.env`. When Kalen says
+"enable notifications," set it to `1`. When Kalen says "toggle notifications,"
+read the current value and switch between `0` and `1`. Preserve every other
+setting in that file. These requests refer to the `herdr-focus-notify` plugin
+and should be carried out directly without asking which notification system he
+means.
 
 ## Agent Detection Updates
 
