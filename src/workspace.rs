@@ -44,6 +44,7 @@ pub struct WorkspaceGitStatus {
     pub resolved_identity_cwd: PathBuf,
     pub branch: Option<String>,
     pub ahead_behind: Option<(usize, usize)>,
+    pub dirty_count: Option<usize>,
     pub space: Option<GitSpaceMetadata>,
 }
 
@@ -51,6 +52,7 @@ pub struct WorkspaceGitStatus {
 pub struct WorkspaceGitStatusSnapshot {
     pub branch: Option<String>,
     pub ahead_behind: Option<(usize, usize)>,
+    pub dirty_count: Option<usize>,
     pub space: Option<GitSpaceMetadata>,
 }
 
@@ -65,6 +67,7 @@ impl WorkspaceGitStatusSnapshot {
             resolved_identity_cwd,
             branch: self.branch,
             ahead_behind: self.ahead_behind,
+            dirty_count: self.dirty_count,
             space: self.space,
         }
     }
@@ -153,6 +156,8 @@ pub struct Workspace {
     pub(crate) cached_git_branch: Option<String>,
     /// Cached ahead/behind counts for the workspace repo's current branch upstream.
     pub(crate) cached_git_ahead_behind: Option<(usize, usize)>,
+    /// Cached working-tree dirty state for the workspace repo.
+    pub(crate) cached_git_dirty_count: Option<usize>,
     /// Cached derived Git repo metadata for worktree actions and status display.
     pub(crate) cached_git_space: Option<GitSpaceMetadata>,
     /// Explicit Herdr-managed worktree grouping provenance.
@@ -214,6 +219,7 @@ impl Workspace {
             identity_cwd: identity_cwd.clone(),
             cached_git_branch: git_branch(&identity_cwd),
             cached_git_ahead_behind: None,
+            cached_git_dirty_count: None,
             cached_git_space: git_space_metadata(&identity_cwd),
             worktree_space: None,
             public_pane_numbers,
@@ -395,6 +401,7 @@ impl Workspace {
                 identity_cwd: initial_cwd.clone(),
                 cached_git_branch: git_branch(&initial_cwd),
                 cached_git_ahead_behind: None,
+                cached_git_dirty_count: None,
                 cached_git_space: None,
                 worktree_space: None,
                 public_pane_numbers,
@@ -1077,6 +1084,10 @@ impl Workspace {
         self.cached_git_ahead_behind
     }
 
+    pub fn git_dirty_count(&self) -> Option<usize> {
+        self.cached_git_dirty_count
+    }
+
     pub fn git_space(&self) -> Option<&GitSpaceMetadata> {
         self.cached_git_space.as_ref()
     }
@@ -1090,6 +1101,7 @@ impl Workspace {
         let cwd = self.resolved_identity_cwd();
         self.cached_git_branch = cwd.as_deref().and_then(git_branch);
         self.cached_git_ahead_behind = cwd.as_deref().and_then(git_ahead_behind);
+        self.cached_git_dirty_count = cwd.as_deref().and_then(self::git::git_dirty_count);
         self.cached_git_space = cwd.as_deref().and_then(git_space_metadata);
     }
 
@@ -1206,6 +1218,7 @@ impl Workspace {
             identity_cwd: identity_cwd.clone(),
             cached_git_branch: git_branch(&identity_cwd),
             cached_git_ahead_behind: None,
+            cached_git_dirty_count: None,
             cached_git_space: None,
             worktree_space: None,
             public_pane_numbers,

@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use crate::workspace::WorkspaceGitStatusSnapshot;
 
@@ -54,11 +55,13 @@ pub fn git_status_snapshot_for_cwd(
     cached: Option<&GitStatusCacheEntry>,
 ) -> (WorkspaceGitStatusSnapshot, Option<GitStatusCacheEntry>) {
     let space = git_space_metadata(cwd);
+    let dirty_count = git_dirty_count(cwd);
     let Some(fingerprint) = git_status_fingerprint(cwd) else {
         return (
             WorkspaceGitStatusSnapshot {
                 branch: git_branch(cwd),
                 ahead_behind: None,
+                dirty_count,
                 space,
             },
             None,
@@ -70,6 +73,7 @@ pub fn git_status_snapshot_for_cwd(
         let snapshot = WorkspaceGitStatusSnapshot {
             branch,
             ahead_behind: cached.snapshot.ahead_behind,
+            dirty_count,
             space,
         };
         return (
@@ -88,6 +92,7 @@ pub fn git_status_snapshot_for_cwd(
     let snapshot = WorkspaceGitStatusSnapshot {
         branch,
         ahead_behind,
+        dirty_count,
         space,
     };
     (
@@ -96,6 +101,21 @@ pub fn git_status_snapshot_for_cwd(
             fingerprint,
             snapshot,
         }),
+    )
+}
+
+pub(crate) fn git_dirty_count(cwd: &Path) -> Option<usize> {
+    let output = Command::new("git")
+        .args(["status", "--porcelain=v1", "--untracked-files=normal"])
+        .current_dir(cwd)
+        .output()
+        .ok()?;
+    output.status.success().then_some(
+        output
+            .stdout
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .count(),
     )
 }
 
@@ -245,6 +265,113 @@ mod tests {
     use super::*;
     use crate::workspace::git::test_support::{run_git, temp_test_dir, write_fake_tracked_repo};
 
+    fn initialized_repo(name: &str) -> PathBuf {
+        let root = temp_test_dir(name);
+        std::fs::create_dir_all(&root).unwrap();
+        run_git(&root, &["init", "-b", "main"]);
+        run_git(&root, &["config", "user.email", "herdr@example.invalid"]);
+        run_git(&root, &["config", "user.name", "Herdr Test"]);
+        std::fs::write(root.join("tracked.txt"), "initial\n").unwrap();
+        run_git(&root, &["add", "tracked.txt"]);
+        run_git(&root, &["commit", "-m", "initial"]);
+        root
+    }
+
+    #[test]
+    fn git_dirty_reports_worktree_states_and_ignores_ignored_files() {
+        let root = initialized_repo("dirty-states");
+        assert_eq!(git_dirty_count(&root), Some(0));
+
+        std::fs::write(root.join("untracked.txt"), "new\n").unwrap();
+        assert_eq!(git_dirty_count(&root), Some(1));
+        std::fs::write(root.join("another-untracked.txt"), "new\n").unwrap();
+        assert_eq!(git_dirty_count(&root), Some(2));
+        std::fs::remove_file(root.join("untracked.txt")).unwrap();
+        std::fs::remove_file(root.join("another-untracked.txt")).unwrap();
+
+        std::fs::write(root.join("tracked.txt"), "modified\n").unwrap();
+        assert_eq!(git_dirty_count(&root), Some(1));
+        run_git(&root, &["add", "tracked.txt"]);
+        assert_eq!(git_dirty_count(&root), Some(1));
+        run_git(&root, &["reset", "--hard", "HEAD"]);
+
+        std::fs::write(root.join(".gitignore"), "ignored.txt\n").unwrap();
+        run_git(&root, &["add", ".gitignore"]);
+        run_git(&root, &["commit", "-m", "ignore test file"]);
+        std::fs::write(root.join("ignored.txt"), "ignored\n").unwrap();
+        assert_eq!(git_dirty_count(&root), Some(0));
+
+        std::fs::remove_file(root.join("tracked.txt")).unwrap();
+        assert_eq!(git_dirty_count(&root), Some(1));
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn git_dirty_is_recomputed_when_status_fingerprint_is_cached() {
+        let root = initialized_repo("dirty-cache-refresh");
+        let (clean, cache) = git_status_snapshot_for_cwd(&root, None);
+        assert_eq!(clean.dirty_count, Some(0));
+
+        std::fs::write(root.join("untracked.txt"), "new\n").unwrap();
+        let (dirty, _) = git_status_snapshot_for_cwd(&root, cache.as_ref());
+
+        assert_eq!(dirty.dirty_count, Some(1));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn git_dirty_returns_none_outside_a_repository() {
+        let root = temp_test_dir("dirty-non-git");
+        std::fs::create_dir_all(&root).unwrap();
+        assert_eq!(git_dirty_count(&root), None);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn git_dirty_reports_conflicts() {
+        let root = initialized_repo("dirty-conflict");
+        run_git(&root, &["checkout", "-b", "conflict"]);
+        std::fs::write(root.join("tracked.txt"), "conflict branch\n").unwrap();
+        run_git(&root, &["commit", "-am", "conflict branch"]);
+        run_git(&root, &["checkout", "main"]);
+        std::fs::write(root.join("tracked.txt"), "main branch\n").unwrap();
+        run_git(&root, &["commit", "-am", "main branch"]);
+
+        let merge = Command::new("git")
+            .args(["merge", "conflict"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(!merge.status.success());
+        assert_eq!(git_dirty_count(&root), Some(1));
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn git_dirty_is_scoped_to_each_linked_worktree() {
+        let base = temp_test_dir("dirty-linked-worktree");
+        let root = base.join("repo");
+        let linked = base.join("linked");
+        std::fs::create_dir_all(&base).unwrap();
+        let root_arg = root.to_string_lossy().to_string();
+        run_git(&base, &["init", "-b", "main", &root_arg]);
+        run_git(&root, &["config", "user.email", "herdr@example.invalid"]);
+        run_git(&root, &["config", "user.name", "Herdr Test"]);
+        std::fs::write(root.join("tracked.txt"), "initial\n").unwrap();
+        run_git(&root, &["add", "tracked.txt"]);
+        run_git(&root, &["commit", "-m", "initial"]);
+        let linked_arg = linked.to_string_lossy().to_string();
+        run_git(&root, &["worktree", "add", "-b", "linked", &linked_arg]);
+
+        std::fs::write(linked.join("untracked.txt"), "new\n").unwrap();
+
+        assert_eq!(git_dirty_count(&root), Some(0));
+        assert_eq!(git_dirty_count(&linked), Some(1));
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
     #[test]
     fn git_status_cache_key_ignores_invalid_git_marker() {
         let base = temp_test_dir("invalid-git-root");
@@ -267,6 +394,7 @@ mod tests {
             snapshot: WorkspaceGitStatusSnapshot {
                 branch: Some("main".into()),
                 ahead_behind: Some((2, 1)),
+                dirty_count: Some(0),
                 space: git_space_metadata(&root),
             },
         };
@@ -290,6 +418,7 @@ mod tests {
             snapshot: WorkspaceGitStatusSnapshot {
                 branch: Some("main".into()),
                 ahead_behind: Some((4, 0)),
+                dirty_count: Some(0),
                 space: git_space_metadata(&root),
             },
         };
@@ -323,6 +452,7 @@ mod tests {
             snapshot: WorkspaceGitStatusSnapshot {
                 branch: Some("main".into()),
                 ahead_behind: Some((0, 3)),
+                dirty_count: Some(0),
                 space: git_space_metadata(&root),
             },
         };

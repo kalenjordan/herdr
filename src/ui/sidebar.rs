@@ -931,12 +931,20 @@ fn render_workspace_list(
                     }
                     (!parts.is_empty()).then_some(parts)
                 });
+                let dirty_label = ws
+                    .git_dirty_count()
+                    .filter(|count| *count > 0)
+                    .map(|count| (format!("dirty {count}"), p.yellow));
                 let reserved = upstream_label
                     .as_ref()
                     .map(|parts| {
                         parts.iter().map(|(label, _)| label.len()).sum::<usize>() + parts.len()
                     })
-                    .unwrap_or(0);
+                    .unwrap_or(0)
+                    + dirty_label
+                        .as_ref()
+                        .map(|(label, _)| label.len() + 1)
+                        .unwrap_or(0);
                 let max_branch_len = (card.rect.width as usize).saturating_sub(5 + reserved);
                 let branch_display = truncate_end(&branch, max_branch_len);
                 let branch_color = if selected || is_active {
@@ -957,6 +965,10 @@ fn render_workspace_list(
                         }
                         spans.push(Span::styled(label, Style::default().fg(color)));
                     }
+                }
+                if let Some((label, color)) = dirty_label {
+                    spans.push(Span::styled(" ", Style::default()));
+                    spans.push(Span::styled(label, Style::default().fg(color)));
                 }
                 frame.render_widget(
                     Paragraph::new(Line::from(spans)),

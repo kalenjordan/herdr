@@ -12,6 +12,33 @@ use crate::app::AppState;
 const MIN_TAB_WIDTH: u16 = 8;
 const NEW_TAB_WIDTH: u16 = 3;
 const TAB_SCROLL_BUTTON_WIDTH: u16 = 3;
+pub(crate) fn tab_content_rect(ws: &crate::workspace::Workspace, area: Rect) -> Rect {
+    let reserved = dirty_status_label(ws)
+        .map(|label| display_width_u16(&label).saturating_add(2).min(area.width))
+        .unwrap_or(0);
+    Rect::new(
+        area.x,
+        area.y,
+        area.width.saturating_sub(reserved),
+        area.height,
+    )
+}
+
+fn dirty_status_label(ws: &crate::workspace::Workspace) -> Option<String> {
+    ws.git_dirty_count()
+        .filter(|count| *count > 0)
+        .map(|count| format!("dirty {count}"))
+}
+
+fn dirty_status_rect(ws: &crate::workspace::Workspace, area: Rect) -> Rect {
+    let tab_area = tab_content_rect(ws, area);
+    Rect::new(
+        tab_area.x + tab_area.width,
+        area.y,
+        area.width.saturating_sub(tab_area.width),
+        area.height,
+    )
+}
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TabBarView {
@@ -264,6 +291,16 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
         area,
     );
 
+    let dirty_rect = dirty_status_rect(ws, area);
+    if dirty_rect.width > 0 {
+        frame.render_widget(
+            Paragraph::new(format!(" {} ", dirty_status_label(ws).unwrap_or_default()))
+                .style(Style::default().fg(p.yellow).bg(p.panel_bg))
+                .right_aligned(),
+            dirty_rect,
+        );
+    }
+
     let first_visible_idx = app
         .view
         .tab_hit_areas
@@ -436,6 +473,29 @@ mod tests {
             app.workspaces[0].tab_display_name(custom_tab).as_deref(),
             Some("test")
         );
+    }
+
+    #[test]
+    fn dirty_status_reserves_right_edge_and_renders() {
+        let mut app = AppState::test_new();
+        let mut ws = Workspace::test_new("test");
+        ws.cached_git_dirty_count = Some(3);
+        app.active = Some(0);
+        app.workspaces = vec![ws];
+        app.view.tab_bar_rect = Rect::new(0, 0, 30, 1);
+        let tab_area = tab_content_rect(&app.workspaces[0], app.view.tab_bar_rect);
+        let view = compute_tab_bar_view(&app.workspaces[0], tab_area, 0, true, false);
+        app.view.tab_hit_areas = view.tab_hit_areas;
+
+        assert_eq!(tab_area, Rect::new(0, 0, 21, 1));
+        let backend = TestBackend::new(30, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
+            .unwrap();
+
+        let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
+        assert!(row.ends_with(" dirty 3"), "tab row: {row:?}");
     }
 
     #[test]

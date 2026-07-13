@@ -85,7 +85,7 @@ pub(crate) use self::{
         mobile_switcher_workspace_doc_range, MobileSwitcherTarget,
     },
     panes::{apply_pane_chrome, pane_inner_rect, pane_is_scrolled_back},
-    tabs::compute_tab_bar_view,
+    tabs::{compute_tab_bar_view, tab_content_rect},
     widgets::{centered_popup_rect, modal_stack_areas},
 };
 use crate::app::state::ViewLayout;
@@ -191,7 +191,9 @@ fn desktop_tab_bar_and_terminal_area(
     ws: &crate::workspace::Workspace,
     main_area: Rect,
 ) -> (Rect, Rect) {
-    let hide_single_tab_bar = app.hide_tab_bar_when_single_tab && ws.tabs.len() == 1;
+    let hide_single_tab_bar = app.hide_tab_bar_when_single_tab
+        && ws.tabs.len() == 1
+        && ws.git_dirty_count().unwrap_or(0) == 0;
     if !hide_single_tab_bar && main_area.height > 1 {
         let [tab_bar_rect, terminal_area] =
             Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(main_area);
@@ -256,7 +258,7 @@ fn compute_view_internal(
         .map(|ws| {
             compute_tab_bar_view(
                 ws,
-                tab_bar_rect,
+                tab_content_rect(ws, tab_bar_rect),
                 app.tab_scroll,
                 app.tab_scroll_follow_active,
                 app.mouse_capture,
@@ -777,6 +779,23 @@ mod tests {
         assert_eq!(app.view.tab_bar_rect, Rect::default());
         assert!(app.view.tab_hit_areas.is_empty());
         assert_eq!(app.view.new_tab_hit_area, Rect::default());
+    }
+
+    #[test]
+    fn dirty_single_tab_workspace_keeps_status_row_visible() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.hide_tab_bar_when_single_tab = true;
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.workspaces[0].cached_git_dirty_count = Some(3);
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+
+        compute_view(&mut app, Rect::new(0, 0, 80, 20));
+
+        assert_eq!(app.view.tab_bar_rect, Rect::new(26, 0, 54, 1));
+        assert_eq!(app.view.terminal_area, Rect::new(26, 1, 54, 19));
+        assert!(app.view.tab_hit_areas[0].x + app.view.tab_hit_areas[0].width <= 71);
     }
 
     #[tokio::test]

@@ -1546,7 +1546,7 @@ impl AppState {
 
         let layout = crate::ui::compute_tab_bar_view(
             ws,
-            area,
+            crate::ui::tab_content_rect(ws, area),
             self.tab_scroll,
             self.tab_scroll_follow_active,
             self.mouse_capture,
@@ -2851,6 +2851,10 @@ impl AppState {
                 ws.cached_git_ahead_behind = result.ahead_behind;
                 changed = true;
             }
+            if ws.cached_git_dirty_count != result.dirty_count {
+                ws.cached_git_dirty_count = result.dirty_count;
+                changed = true;
+            }
             if ws.cached_git_space != result.space {
                 ws.cached_git_space = result.space;
                 changed = true;
@@ -4027,6 +4031,7 @@ mod tests {
                 resolved_identity_cwd: first_cwd,
                 branch: Some("main".into()),
                 ahead_behind: Some((2, 1)),
+                dirty_count: Some(0),
                 space: None,
             }],
         );
@@ -4034,8 +4039,35 @@ mod tests {
         assert!(changed);
         assert_eq!(state.workspaces[0].branch().as_deref(), Some("main"));
         assert_eq!(state.workspaces[0].git_ahead_behind(), Some((2, 1)));
+        assert_eq!(state.workspaces[0].git_dirty_count(), Some(0));
         assert_eq!(state.workspaces[1].id, second_id);
         assert_eq!(state.workspaces[1].git_ahead_behind(), None);
+    }
+
+    #[test]
+    fn apply_workspace_git_statuses_marks_dirty_state_changes() {
+        let mut state = app_with_workspaces(&["one"]);
+        let workspace_id = state.workspaces[0].id.clone();
+        let cwd = state.workspaces[0].resolved_identity_cwd().unwrap();
+        state.workspaces[0].cached_git_branch = None;
+        state.workspaces[0].cached_git_ahead_behind = None;
+        state.workspaces[0].cached_git_dirty_count = Some(0);
+        state.workspaces[0].cached_git_space = None;
+
+        let changed = state.apply_workspace_git_statuses(
+            &crate::terminal::TerminalRuntimeRegistry::new(),
+            vec![WorkspaceGitStatus {
+                workspace_id,
+                resolved_identity_cwd: cwd,
+                branch: None,
+                ahead_behind: None,
+                dirty_count: Some(2),
+                space: None,
+            }],
+        );
+
+        assert!(changed);
+        assert_eq!(state.workspaces[0].git_dirty_count(), Some(2));
     }
 
     #[test]
@@ -4053,6 +4085,7 @@ mod tests {
                 resolved_identity_cwd: std::path::PathBuf::from("/definitely/not/current"),
                 branch: Some("main".into()),
                 ahead_behind: Some((0, 1)),
+                dirty_count: Some(0),
                 space: None,
             }],
         );
@@ -4078,6 +4111,7 @@ mod tests {
                 resolved_identity_cwd: cwd,
                 branch: None,
                 ahead_behind: None,
+                dirty_count: Some(0),
                 space: None,
             }],
         );
@@ -4103,6 +4137,7 @@ mod tests {
                 resolved_identity_cwd: cwd,
                 branch: Some("scratch".into()),
                 ahead_behind: None,
+                dirty_count: Some(0),
                 space: Some(crate::workspace::GitSpaceMetadata {
                     key: "other-repo-key".into(),
                     checkout_key: "/other/checkout".into(),
