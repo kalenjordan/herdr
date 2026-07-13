@@ -1552,6 +1552,21 @@ next_tab = "prefix+n"
     }
 
     #[test]
+    fn detach_defaults_to_prefix_q_and_command_shift_x() {
+        let kb = Config::default().keybinds();
+        assert_eq!(
+            binding_triggers(&kb.detach),
+            vec![
+                BindingTrigger::Prefix((KeyCode::Char('q'), KeyModifiers::empty())),
+                BindingTrigger::Direct((
+                    KeyCode::Char('x'),
+                    KeyModifiers::SUPER | KeyModifiers::SHIFT,
+                )),
+            ]
+        );
+    }
+
+    #[test]
     fn open_and_remove_worktree_keybinds_are_unset_by_default() {
         let kb = Config::default().keybinds();
         assert!(kb.open_worktree.bindings.is_empty());
