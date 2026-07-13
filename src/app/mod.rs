@@ -769,6 +769,10 @@ impl App {
         let pane_id_aliases = crate::persist::handoff_pane_aliases(snapshot, &workspaces);
 
         app.no_session = false;
+        // Handoff starts from an empty no-session shell so it does not restore
+        // the persisted workspace twice. Load session-scoped plugins now that
+        // the replacement process has transitioned back to server mode.
+        app.state.installed_plugins = load_plugin_registry(false);
         let now = Instant::now();
         if background_update_check_enabled(app.no_session, app.update_version_check_enabled) {
             app.next_auto_update_check = app
