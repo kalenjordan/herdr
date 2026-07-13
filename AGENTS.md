@@ -166,6 +166,12 @@ Use lowercase conventional commits, no emojis, and no AI co-author lines. Commit
 
 Before committing, propose the commit message and get alignment.
 
+Before creating a local commit, identify its promotion path to `master` and
+the release that will carry it. Do not leave user-facing or operational
+changes only on a local branch, including changes running through a local live
+handoff. After committing, either integrate the change into `master` and push
+it, or clearly report the specific blocker and that it is not upgrade-safe.
+
 When a normal feature or fix commit relates to a GitHub issue, add a commit body line `refs #<issue-number>` after the subject:
 
 ```text
