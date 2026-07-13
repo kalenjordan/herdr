@@ -2174,6 +2174,12 @@ fn safe_file_url(url: &str) -> Option<&str> {
     url.starts_with("file://").then_some(url)
 }
 
+fn safe_clickable_url(url: &str) -> Option<(&str, bool)> {
+    safe_web_url(url)
+        .map(|url| (url, true))
+        .or_else(|| safe_file_url(url).map(|url| (url, false)))
+}
+
 fn hyperlink_row_bounds(
     links: &[((u16, u16), String, String)],
     screen_col: u16,
@@ -2274,7 +2280,7 @@ pub(crate) fn clickable_spans(row: &str, cwd: Option<&Path>) -> Vec<(u16, u16, S
     for span in &url_spans {
         let start_byte = byte_index_for_cell(row, span.start);
         let end_byte = byte_index_after_cell(row, span.end);
-        if let Some(url) = row.get(start_byte..end_byte).and_then(safe_web_url) {
+        if let Some((url, _)) = row.get(start_byte..end_byte).and_then(safe_clickable_url) {
             let (start_col, end_col) = span.columns(&cells);
             spans.push((start_col, end_col, url.to_owned()));
         }
@@ -2305,9 +2311,9 @@ fn clickable_target_at_column(
     if let Some(span) = url_span {
         let start_byte = byte_index_for_cell(row, span.start);
         let end_byte = byte_index_after_cell(row, span.end);
-        let url = row.get(start_byte..end_byte).and_then(safe_web_url)?;
+        let (url, plugin_eligible) = row.get(start_byte..end_byte).and_then(safe_clickable_url)?;
         let (start_col, end_col) = span.columns(&cells);
-        return Some((start_col, end_col, url.to_owned(), true));
+        return Some((start_col, end_col, url.to_owned(), plugin_eligible));
     }
 
     let path_span = path_spans(row, &cells, cwd)
@@ -2487,6 +2493,7 @@ fn url_spans(cells: &[TextCell]) -> Vec<CellSpan> {
     while start < cells.len() {
         if starts_with_chars(&cells[start..], "http://")
             || starts_with_chars(&cells[start..], "https://")
+            || starts_with_chars(&cells[start..], "file://")
         {
             let mut end = start;
             while end + 1 < cells.len() && !cells[end + 1].ch.is_whitespace() {
@@ -2644,6 +2651,7 @@ fn url_span_at_column(cells: &[TextCell], clicked_idx: usize) -> Option<CellSpan
     while start < cells.len() {
         if starts_with_chars(&cells[start..], "http://")
             || starts_with_chars(&cells[start..], "https://")
+            || starts_with_chars(&cells[start..], "file://")
         {
             let mut end = start;
             while end + 1 < cells.len() && !cells[end + 1].ch.is_whitespace() {
@@ -3693,6 +3701,19 @@ mod tests {
             format!("file://{}", file.to_string_lossy().replace(' ', "%20"))
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn clickable_spans_include_plain_file_urls() {
+        let uri = "file:///Users/kalen/report.png";
+        assert_eq!(
+            selected_clickable_uri(&format!("open {uri}"), "report", None).as_deref(),
+            Some(uri)
+        );
+
+        let target = clickable_target_at_column(uri, 10, None).expect("file URL target");
+        assert_eq!(target.2, uri);
+        assert!(!target.3, "file URLs must not invoke web link plugins");
     }
 
     #[test]
