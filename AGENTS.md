@@ -158,6 +158,11 @@ setting in that file. These requests refer to the `herdr-focus-notify` plugin
 and should be carried out directly without asking which notification system he
 means.
 
+When Kalen asks to commit on this machine, it's fine to push to
+`origin/master` right after committing without asking again each time,
+since he works directly on `master` here rather than through task
+branches/PRs. Still surface what was committed and pushed.
+
 ## Agent Detection Updates
 
 Agent detection changes should use the manifest hot-reload loop. Can drives the real agent UI into the target state, then you read the pane with `herdr agent read <pane> --source detection --format text` and inspect matching with `herdr agent explain <pane> --json`. Update the bundled manifest in `src/detect/manifests/<agent>.toml`, copy that manifest to the local override path at `~/.config/herdr/agent-detection/<agent>.toml`, then run `herdr server reload-agent-manifests`. Can verifies the live pane state, and once the rule is correct, remove the local override so the committed bundled manifest remains the source of truth.
