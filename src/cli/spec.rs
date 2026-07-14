@@ -454,6 +454,7 @@ fn pane_command() -> Command {
         )
         .subcommand(report_agent_command())
         .subcommand(report_agent_session_command())
+        .subcommand(report_agent_context_command())
         .subcommand(release_agent_command())
         .subcommand(report_metadata_command())
 }
@@ -482,6 +483,15 @@ fn report_agent_session_command() -> Command {
         .arg(option("agent-session-id", "ID"))
         .arg(path_option("agent-session-path", "PATH"))
         .arg(option("session-start-source", "SOURCE"))
+}
+
+fn report_agent_context_command() -> Command {
+    Command::new("report-agent-context")
+        .about("Report live agent context-window usage for a pane")
+        .arg(required("pane_id", "PANE_ID"))
+        .arg(option("source", "ID"))
+        .arg(option("agent", "LABEL"))
+        .arg(option("used-percent", "N"))
 }
 
 fn release_agent_command() -> Command {

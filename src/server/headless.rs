@@ -479,7 +479,11 @@ impl HeadlessServer {
                 crate::render_prof::event("full_render_cause.api_requests");
             }
 
-            self.app.sync_focus_events();
+            if self.app.sync_focus_events() {
+                needs_render = true;
+                needs_full_render = true;
+                crate::render_prof::event("full_render_cause.focus_changed");
+            }
             self.app.sync_session_save_schedule();
 
             // 4. Accept new client connections.
@@ -3695,9 +3699,9 @@ impl HeadlessServer {
             self.app.next_plugin_status_refresh = now + app::PLUGIN_STATUS_REFRESH_INTERVAL;
         }
 
-        if now >= self.app.next_codex_usage_refresh {
-            changed |= self.app.refresh_codex_usage();
-            self.app.next_codex_usage_refresh = now + app::CODEX_USAGE_REFRESH_INTERVAL;
+        if now >= self.app.next_context_usage_refresh {
+            changed |= self.app.refresh_context_usage();
+            self.app.next_context_usage_refresh = now + app::CONTEXT_USAGE_REFRESH_INTERVAL;
         }
 
         if self
@@ -5537,7 +5541,7 @@ next_tab = ""
         let mut server = test_headless_server();
         let now = Instant::now();
         server.app.next_plugin_status_refresh = now;
-        server.app.next_codex_usage_refresh = now;
+        server.app.next_context_usage_refresh = now;
 
         server.handle_scheduled_tasks_headless(now, false);
 
@@ -5546,8 +5550,8 @@ next_tab = ""
             now + app::PLUGIN_STATUS_REFRESH_INTERVAL
         );
         assert_eq!(
-            server.app.next_codex_usage_refresh,
-            now + app::CODEX_USAGE_REFRESH_INTERVAL
+            server.app.next_context_usage_refresh,
+            now + app::CONTEXT_USAGE_REFRESH_INTERVAL
         );
     }
 

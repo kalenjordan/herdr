@@ -200,7 +200,7 @@ fn desktop_tab_bar_and_terminal_area(
             .git_ahead_behind()
             .is_none_or(|(ahead, behind)| ahead == 0 && behind == 0)
         && app.plugin_status_items.is_empty()
-        && app.codex_context_used_percent.is_none();
+        && app.context_used_percent.is_none();
     if !hide_single_tab_bar && main_area.height > 1 {
         let [tab_bar_rect, terminal_area] =
             Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(main_area);
@@ -268,7 +268,7 @@ fn compute_view_internal(
                 tab_content_rect_with_status(
                     ws,
                     &app.plugin_status_items,
-                    app.codex_context_used_percent,
+                    app.context_used_percent,
                     tab_bar_rect,
                 ),
                 app.tab_scroll,

@@ -291,6 +291,14 @@ pub struct PaneReportAgentSessionParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneReportAgentContextParams {
+    pub pane_id: String,
+    pub source: String,
+    pub agent: String,
+    pub used_percent: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PaneReportMetadataParams {
     pub pane_id: String,
     pub source: String,

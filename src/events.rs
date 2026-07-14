@@ -86,6 +86,13 @@ pub enum AppEvent {
         session_ref: Option<crate::agent_resume::AgentSessionRef>,
         session_start_source: Option<String>,
     },
+    /// Live context-window usage percentage was reported for a pane's agent session.
+    AgentContextReported {
+        pane_id: PaneId,
+        source: String,
+        agent_label: String,
+        used_percent: u8,
+    },
     /// Display-only agent metadata was reported for a pane.
     HookMetadataReported {
         pane_id: PaneId,

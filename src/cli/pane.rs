@@ -2,10 +2,10 @@ use crate::api::schema::{
     Method, PaneCurrentParams, PaneDirection, PaneEdgesParams, PaneFocusDirectionParams,
     PaneLayoutParams, PaneListParams, PaneMoveDestination, PaneMoveParams, PaneNeighborParams,
     PaneProcessInfoParams, PaneReadParams, PaneReleaseAgentParams, PaneRenameParams,
-    PaneReportAgentParams, PaneReportAgentSessionParams, PaneReportMetadataParams,
-    PaneResizeParams, PaneSendInputParams, PaneSendKeysParams, PaneSendTextParams, PaneSplitParams,
-    PaneSwapParams, PaneTarget, PaneZoomMode, PaneZoomParams, ReadFormat, ReadSource, Request,
-    SplitDirection,
+    PaneReportAgentContextParams, PaneReportAgentParams, PaneReportAgentSessionParams,
+    PaneReportMetadataParams, PaneResizeParams, PaneSendInputParams, PaneSendKeysParams,
+    PaneSendTextParams, PaneSplitParams, PaneSwapParams, PaneTarget, PaneZoomMode, PaneZoomParams,
+    ReadFormat, ReadSource, Request, SplitDirection,
 };
 
 pub(super) fn run_pane_command(args: &[String]) -> std::io::Result<i32> {
@@ -35,6 +35,7 @@ pub(super) fn run_pane_command(args: &[String]) -> std::io::Result<i32> {
         "send-keys" => pane_send_keys(&args[1..]),
         "report-agent" => pane_report_agent(&args[1..]),
         "report-agent-session" => pane_report_agent_session(&args[1..]),
+        "report-agent-context" => pane_report_agent_context(&args[1..]),
         "release-agent" => pane_release_agent(&args[1..]),
         "report-metadata" => pane_report_metadata(&args[1..]),
         "run" => pane_run(&args[1..]),
@@ -1157,6 +1158,80 @@ fn pane_report_agent_session(args: &[String]) -> std::io::Result<i32> {
     ))
 }
 
+fn pane_report_agent_context(args: &[String]) -> std::io::Result<i32> {
+    let Some(raw_pane_id) = args.first() else {
+        eprintln!(
+            "usage: herdr pane report-agent-context <pane_id> --source ID --agent LABEL --used-percent N"
+        );
+        return Ok(2);
+    };
+
+    let pane_id = super::normalize_pane_id(raw_pane_id);
+    let mut source = None;
+    let mut agent = None;
+    let mut used_percent = None;
+
+    let mut index = 1;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--source" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --source");
+                    return Ok(2);
+                };
+                source = Some(value.clone());
+                index += 2;
+            }
+            "--agent" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --agent");
+                    return Ok(2);
+                };
+                agent = Some(value.clone());
+                index += 2;
+            }
+            "--used-percent" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --used-percent");
+                    return Ok(2);
+                };
+                used_percent = Some(super::parse_u64_flag("--used-percent", value)?);
+                index += 2;
+            }
+            other => {
+                eprintln!("unknown option: {other}");
+                return Ok(2);
+            }
+        }
+    }
+
+    let Some(source) = source.and_then(|source| {
+        let source = source.trim().to_string();
+        (!source.is_empty()).then_some(source)
+    }) else {
+        eprintln!("missing required --source");
+        return Ok(2);
+    };
+    let Some(agent) = agent else {
+        eprintln!("missing required --agent");
+        return Ok(2);
+    };
+    let Some(used_percent) = used_percent else {
+        eprintln!("missing required --used-percent");
+        return Ok(2);
+    };
+    let used_percent = used_percent.min(100) as u8;
+
+    super::send_ok_request(Method::PaneReportAgentContext(
+        PaneReportAgentContextParams {
+            pane_id,
+            source,
+            agent,
+            used_percent,
+        },
+    ))
+}
+
 fn pane_release_agent(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_pane_id) = args.first() else {
         eprintln!("usage: herdr pane release-agent <pane_id> --source ID --agent LABEL [--seq N]");
@@ -1435,6 +1510,9 @@ fn print_pane_help() {
     eprintln!("  herdr pane send-keys <pane_id> <key> [key ...]");
     eprintln!("  herdr pane report-agent <pane_id> --source ID --agent LABEL --state idle|working|blocked|unknown [--message TEXT] [--custom-status TEXT] [--seq N] [--agent-session-id ID] [--agent-session-path PATH]");
     eprintln!("  herdr pane report-agent-session <pane_id> --source ID --agent LABEL [--seq N] [--agent-session-id ID] [--agent-session-path PATH]");
+    eprintln!(
+        "  herdr pane report-agent-context <pane_id> --source ID --agent LABEL --used-percent N"
+    );
     eprintln!("  herdr pane release-agent <pane_id> --source ID --agent LABEL [--seq N]");
     eprintln!("  herdr pane report-metadata <pane_id> --source ID [--agent LABEL] [--applies-to-source ID] [--title TEXT|--clear-title] [--display-agent TEXT|--clear-display-agent] [--custom-status TEXT|--clear-custom-status] [--state-label STATUS=TEXT] [--clear-state-labels] [--seq N] [--ttl-ms N]");
     eprintln!("  herdr pane run <pane_id> <command>");

@@ -20,10 +20,10 @@ pub(crate) fn tab_content_rect(ws: &crate::workspace::Workspace, area: Rect) -> 
 pub(crate) fn tab_content_rect_with_status(
     ws: &crate::workspace::Workspace,
     plugin_items: &[crate::plugin_status::PluginStatusItem],
-    codex_context_used_percent: Option<u8>,
+    context_used_percent: Option<u8>,
     area: Rect,
 ) -> Rect {
-    let reserved = status_labels(ws, plugin_items, codex_context_used_percent)
+    let reserved = status_labels(ws, plugin_items, context_used_percent)
         .iter()
         .map(|label| display_width_u16(label).saturating_add(2))
         .sum::<u16>()
@@ -52,14 +52,14 @@ fn git_status_label(ws: &crate::workspace::Workspace) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join(" "))
 }
 
-fn codex_usage_label(used: u8) -> String {
+fn context_usage_label(used: u8) -> String {
     format!("{}%", used.min(100))
 }
 
 fn status_labels(
     ws: &crate::workspace::Workspace,
     plugin_items: &[crate::plugin_status::PluginStatusItem],
-    codex_context_used_percent: Option<u8>,
+    context_used_percent: Option<u8>,
 ) -> Vec<String> {
     let mut labels = plugin_items
         .iter()
@@ -68,8 +68,8 @@ fn status_labels(
     if let Some(git) = git_status_label(ws) {
         labels.push(git);
     }
-    if let Some(used) = codex_context_used_percent {
-        labels.push(codex_usage_label(used));
+    if let Some(used) = context_used_percent {
+        labels.push(context_usage_label(used));
     }
     labels
 }
@@ -77,10 +77,10 @@ fn status_labels(
 fn status_rect(
     ws: &crate::workspace::Workspace,
     plugin_items: &[crate::plugin_status::PluginStatusItem],
-    codex_context_used_percent: Option<u8>,
+    context_used_percent: Option<u8>,
     area: Rect,
 ) -> Rect {
-    let tab_area = tab_content_rect_with_status(ws, plugin_items, codex_context_used_percent, area);
+    let tab_area = tab_content_rect_with_status(ws, plugin_items, context_used_percent, area);
     Rect::new(
         tab_area.x + tab_area.width,
         area.y,
@@ -340,12 +340,7 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
         area,
     );
 
-    let status_rect = status_rect(
-        ws,
-        &app.plugin_status_items,
-        app.codex_context_used_percent,
-        area,
-    );
+    let status_rect = status_rect(ws, &app.plugin_status_items, app.context_used_percent, area);
     if status_rect.width > 0 {
         let mut spans = app
             .plugin_status_items
@@ -363,10 +358,10 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
                 Style::default().fg(p.overlay1).bg(p.panel_bg),
             ));
         }
-        if let Some(used) = app.codex_context_used_percent {
+        if let Some(used) = app.context_used_percent {
             let color = if used > 50 { p.peach } else { p.overlay1 };
             spans.push(ratatui::text::Span::styled(
-                format!(" {} ", codex_usage_label(used)),
+                format!(" {} ", context_usage_label(used)),
                 Style::default().fg(color).bg(p.panel_bg),
             ));
         }
@@ -589,7 +584,7 @@ mod tests {
         let tab_area = tab_content_rect_with_status(
             &app.workspaces[0],
             &app.plugin_status_items,
-            app.codex_context_used_percent,
+            app.context_used_percent,
             app.view.tab_bar_rect,
         );
         assert_eq!(tab_area, Rect::new(0, 0, 21, 1));
@@ -604,11 +599,11 @@ mod tests {
     }
 
     #[test]
-    fn codex_usage_renders_as_a_percentage() {
+    fn context_usage_renders_as_a_percentage() {
         let mut app = AppState::test_new();
         app.active = Some(0);
         app.workspaces = vec![Workspace::test_new("test")];
-        app.codex_context_used_percent = Some(31);
+        app.context_used_percent = Some(31);
         app.view.tab_bar_rect = Rect::new(0, 0, 40, 1);
 
         let backend = TestBackend::new(40, 1);

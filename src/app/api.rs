@@ -13,7 +13,10 @@ mod tabs;
 mod workspaces;
 mod worktrees;
 
-use super::{api_helpers::pane_agent_status, App, Mode, OverlayPaneState, ToastKind};
+use super::{
+    api_helpers::pane_agent_status, App, Mode, OverlayPaneState, ToastKind,
+    CONTEXT_USAGE_REFRESH_INTERVAL,
+};
 use crate::events::AppEvent;
 
 const API_NOTIFICATION_RATE_LIMIT: Duration = Duration::from_secs(1);
@@ -761,7 +764,12 @@ impl App {
         self.event_hub.push(event);
     }
 
-    pub(crate) fn sync_focus_events(&mut self) {
+    /// Reconciles focus-change bookkeeping and returns whether focus moved to a
+    /// different pane since the last call. On a change, also refreshes the
+    /// context-usage indicator immediately instead of waiting for its periodic
+    /// tick, since switching to a pane whose agent already reported a usage
+    /// value should reflect it right away.
+    pub(crate) fn sync_focus_events(&mut self) -> bool {
         let current_focus = self.state.active.and_then(|idx| {
             self.state
                 .workspaces
@@ -769,7 +777,7 @@ impl App {
                 .and_then(|ws| ws.focused_pane_id().map(|pane_id| (idx, pane_id)))
         });
         if current_focus == self.last_focus {
-            return;
+            return false;
         }
 
         if let Some((ws_idx, pane_id)) = self.last_focus {
@@ -806,6 +814,9 @@ impl App {
         }
 
         self.last_focus = current_focus;
+        self.refresh_context_usage();
+        self.next_context_usage_refresh = Instant::now() + CONTEXT_USAGE_REFRESH_INTERVAL;
+        true
     }
 
     fn send_pane_focus_event(
@@ -990,6 +1001,9 @@ impl App {
             }
             Method::PaneReportAgentSession(params) => {
                 return self.handle_pane_report_agent_session(request.id, params);
+            }
+            Method::PaneReportAgentContext(params) => {
+                return self.handle_pane_report_agent_context(request.id, params);
             }
             Method::PaneReportMetadata(params) => {
                 return self.handle_pane_report_metadata(request.id, params);
@@ -1264,6 +1278,48 @@ mod tests {
             },
         );
         app
+    }
+
+    #[test]
+    fn sync_focus_events_refreshes_context_usage_immediately_on_focus_change() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.workspaces = vec![
+            crate::workspace::Workspace::test_new("first"),
+            crate::workspace::Workspace::test_new("second"),
+        ];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.mode = Mode::Terminal;
+
+        let second_pane_id = app.state.workspaces[1].tabs[0].root_pane;
+        let second_terminal_id = app.state.workspaces[1].tabs[0].panes[&second_pane_id]
+            .attached_terminal_id
+            .clone();
+        app.state
+            .terminals
+            .get_mut(&second_terminal_id)
+            .unwrap()
+            .set_reported_context_used_percent("claude".into(), 64);
+
+        // Establish the initial focus baseline; no prior pane reported usage.
+        assert!(app.sync_focus_events());
+        assert_eq!(app.state.context_used_percent, None);
+
+        app.state.active = Some(1);
+
+        assert!(app.sync_focus_events(), "focus change should be reported");
+        assert_eq!(
+            app.state.context_used_percent,
+            Some(64),
+            "switching to a pane with an already-reported percentage should reflect it immediately, not wait for the periodic refresh"
+        );
     }
 
     #[tokio::test]

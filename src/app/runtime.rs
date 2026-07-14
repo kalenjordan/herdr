@@ -4,7 +4,7 @@ use crossterm::terminal;
 
 use super::{
     background_update_check_enabled, repeat_key_identity, App, Mode, ANIMATION_INTERVAL,
-    AUTO_UPDATE_CHECK_INTERVAL, CODEX_USAGE_REFRESH_INTERVAL, GIT_REMOTE_STATUS_REFRESH_INTERVAL,
+    AUTO_UPDATE_CHECK_INTERVAL, CONTEXT_USAGE_REFRESH_INTERVAL, GIT_REMOTE_STATUS_REFRESH_INTERVAL,
     MIN_RENDER_INTERVAL, PLUGIN_STATUS_REFRESH_INTERVAL, RESIZE_POLL_INTERVAL,
     SELECTION_AUTOSCROLL_INTERVAL,
 };
@@ -284,9 +284,9 @@ impl App {
             self.next_plugin_status_refresh = now + PLUGIN_STATUS_REFRESH_INTERVAL;
         }
 
-        if now >= self.next_codex_usage_refresh {
-            changed |= self.refresh_codex_usage();
-            self.next_codex_usage_refresh = now + CODEX_USAGE_REFRESH_INTERVAL;
+        if now >= self.next_context_usage_refresh {
+            changed |= self.refresh_context_usage();
+            self.next_context_usage_refresh = now + CONTEXT_USAGE_REFRESH_INTERVAL;
         }
 
         if self
@@ -536,8 +536,8 @@ impl App {
         true
     }
 
-    pub(crate) fn refresh_codex_usage(&mut self) -> bool {
-        let used = self
+    pub(crate) fn refresh_context_usage(&mut self) -> bool {
+        let terminal = self
             .state
             .active
             .and_then(|ws_idx| self.state.workspaces.get(ws_idx))
@@ -545,13 +545,18 @@ impl App {
                 let pane_id = ws.focused_pane_id()?;
                 ws.active_tab()?.panes.get(&pane_id)
             })
-            .and_then(|pane| self.state.terminals.get(&pane.attached_terminal_id))
-            .and_then(|terminal| terminal.codex_session_id())
-            .and_then(crate::codex_usage::load_context_used_percent);
-        if used == self.state.codex_context_used_percent {
+            .and_then(|pane| self.state.terminals.get(&pane.attached_terminal_id));
+        let used = terminal.and_then(|terminal| {
+            if let Some(session_id) = terminal.codex_session_id() {
+                crate::codex_usage::load_context_used_percent(session_id)
+            } else {
+                terminal.claude_context_used_percent()
+            }
+        });
+        if used == self.state.context_used_percent {
             return false;
         }
-        self.state.codex_context_used_percent = used;
+        self.state.context_used_percent = used;
         true
     }
 
@@ -607,7 +612,7 @@ impl App {
             self.copy_feedback_deadline,
             self.next_animation_tick,
             Some(self.next_plugin_status_refresh),
-            Some(self.next_codex_usage_refresh),
+            Some(self.next_context_usage_refresh),
             include_git_refresh
                 .then(|| self.git_refresh_deadline())
                 .flatten(),
@@ -839,7 +844,7 @@ mod tests {
         let now = Instant::now();
         app.last_git_remote_status_refresh = now - super::super::GIT_REMOTE_STATUS_REFRESH_INTERVAL;
         app.next_plugin_status_refresh = now + Duration::from_secs(1);
-        app.next_codex_usage_refresh = now + Duration::from_secs(1);
+        app.next_context_usage_refresh = now + Duration::from_secs(1);
 
         assert_eq!(
             app.next_headless_loop_deadline_with_git_refresh(now, false, false),

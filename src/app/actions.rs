@@ -1682,7 +1682,7 @@ impl AppState {
             crate::ui::tab_content_rect_with_status(
                 ws,
                 &self.plugin_status_items,
-                self.codex_context_used_percent,
+                self.context_used_percent,
                 area,
             ),
             self.tab_scroll,
@@ -3132,6 +3132,15 @@ impl AppState {
                 })
                 .into_iter()
                 .collect(),
+            AppEvent::AgentContextReported {
+                pane_id,
+                source,
+                agent_label,
+                used_percent,
+            } => {
+                self.report_agent_context(pane_id, &source, &agent_label, used_percent);
+                Vec::new()
+            }
             AppEvent::HookMetadataReported {
                 pane_id,
                 source,
@@ -3230,6 +3239,42 @@ impl AppState {
             AppEvent::WorktreeAddFinished(_) => Vec::new(),
             AppEvent::WorktreeRemoveFinished(_) => Vec::new(),
             AppEvent::PluginCommandFinished { .. } => Vec::new(),
+        }
+    }
+
+    fn report_agent_context(
+        &mut self,
+        pane_id: PaneId,
+        source: &str,
+        agent_label: &str,
+        used_percent: u8,
+    ) {
+        if !crate::agent_resume::is_official_agent_source(source, agent_label) {
+            return;
+        }
+        let Some(ws_idx) = self
+            .workspaces
+            .iter()
+            .position(|ws| ws.pane_state(pane_id).is_some())
+        else {
+            return;
+        };
+        let Some(terminal_id) = self.workspaces[ws_idx]
+            .pane_state(pane_id)
+            .map(|pane| pane.attached_terminal_id.clone())
+        else {
+            return;
+        };
+        if let Some(terminal) = self.terminals.get_mut(&terminal_id) {
+            terminal.set_reported_context_used_percent(agent_label.to_string(), used_percent);
+        }
+        let is_focused_pane = self.active == Some(ws_idx)
+            && self.workspaces[ws_idx].focused_pane_id() == Some(pane_id);
+        if is_focused_pane {
+            self.context_used_percent = self
+                .terminals
+                .get(&terminal_id)
+                .and_then(|terminal| terminal.claude_context_used_percent());
         }
     }
 
@@ -5380,6 +5425,52 @@ mod tests {
         assert!(state.pending_agent_notifications.is_empty());
         assert!(state.drain_due_agent_notifications(deadline).is_empty());
         assert!(state.toast.is_none());
+    }
+
+    #[test]
+    fn agent_context_reported_updates_focused_pane_context_used_percent() {
+        let mut state = app_with_workspaces(&["active"]);
+        let pane_id = *state.workspaces[0].panes.keys().next().unwrap();
+        assert_eq!(state.workspaces[0].focused_pane_id(), Some(pane_id));
+
+        state.handle_app_event(AppEvent::AgentContextReported {
+            pane_id,
+            source: "herdr:claude".into(),
+            agent_label: "claude".into(),
+            used_percent: 37,
+        });
+
+        assert_eq!(state.context_used_percent, Some(37));
+    }
+
+    #[test]
+    fn agent_context_reported_from_unofficial_source_is_ignored() {
+        let mut state = app_with_workspaces(&["active"]);
+        let pane_id = *state.workspaces[0].panes.keys().next().unwrap();
+
+        state.handle_app_event(AppEvent::AgentContextReported {
+            pane_id,
+            source: "custom:spoof".into(),
+            agent_label: "claude".into(),
+            used_percent: 90,
+        });
+
+        assert_eq!(state.context_used_percent, None);
+    }
+
+    #[test]
+    fn agent_context_reported_for_background_pane_does_not_change_focused_percent() {
+        let mut state = app_with_workspaces(&["active", "background"]);
+        let bg_pane_id = *state.workspaces[1].panes.keys().next().unwrap();
+
+        state.handle_app_event(AppEvent::AgentContextReported {
+            pane_id: bg_pane_id,
+            source: "herdr:claude".into(),
+            agent_label: "claude".into(),
+            used_percent: 55,
+        });
+
+        assert_eq!(state.context_used_percent, None);
     }
 
     #[test]

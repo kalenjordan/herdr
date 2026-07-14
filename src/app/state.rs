@@ -1492,8 +1492,8 @@ pub struct AppState {
     pub(crate) installed_plugins: InstalledPluginRegistry,
     /// Validated declarative status items published by enabled plugins.
     pub(crate) plugin_status_items: Vec<crate::plugin_status::PluginStatusItem>,
-    /// Context used by the Codex session in the focused pane, if published by its hook.
-    pub(crate) codex_context_used_percent: Option<u8>,
+    /// Context used by the Codex or Claude session in the focused pane, if published by its hook.
+    pub(crate) context_used_percent: Option<u8>,
     /// Pane ids opened through the plugin pane API.
     pub(crate) plugin_panes: std::collections::HashMap<PaneId, PluginPaneRecord>,
     /// Recent plugin action/event command executions.
@@ -1849,7 +1849,7 @@ impl AppState {
             integration_install_messages: Vec::new(),
             installed_plugins: std::collections::HashMap::new(),
             plugin_status_items: Vec::new(),
-            codex_context_used_percent: None,
+            context_used_percent: None,
             plugin_panes: std::collections::HashMap::new(),
             plugin_command_logs: Vec::new(),
             next_plugin_command_log_id: 1,

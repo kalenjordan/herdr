@@ -2250,6 +2250,32 @@
           ],
           "type": "object"
         },
+        "PaneReportAgentContextParams": {
+          "properties": {
+            "agent": {
+              "type": "string"
+            },
+            "pane_id": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "used_percent": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "pane_id",
+            "source",
+            "agent",
+            "used_percent"
+          ],
+          "type": "object"
+        },
         "PaneReportAgentParams": {
           "properties": {
             "agent": {
@@ -4683,6 +4709,22 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/PaneReportAgentSessionParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "pane.report_agent_context",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/PaneReportAgentContextParams"
             }
           },
           "required": [

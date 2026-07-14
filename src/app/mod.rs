@@ -36,7 +36,7 @@ pub(crate) const SELECTION_AUTOSCROLL_INTERVAL: Duration = Duration::from_millis
 const RESIZE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const GIT_REMOTE_STATUS_REFRESH_INTERVAL: Duration = Duration::from_millis(1500);
 pub(crate) const PLUGIN_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
-pub(crate) const CODEX_USAGE_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+pub(crate) const CONTEXT_USAGE_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const AUTO_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
 const PENDING_AGENT_RESUME_THEME_WAIT: Duration = Duration::from_millis(750);
 const SESSION_SAVE_DEBOUNCE: Duration = Duration::from_secs(5);
@@ -110,7 +110,7 @@ pub struct App {
     pub(crate) last_api_notification_at: Option<Instant>,
     pub(crate) last_git_remote_status_refresh: Instant,
     pub(crate) next_plugin_status_refresh: Instant,
-    pub(crate) next_codex_usage_refresh: Instant,
+    pub(crate) next_context_usage_refresh: Instant,
     pub(crate) git_refresh_in_flight: bool,
     pub(crate) git_refresh_due_after_in_flight: bool,
     pub(crate) git_status_cache: HashMap<std::path::PathBuf, crate::workspace::GitStatusCacheEntry>,
@@ -652,7 +652,7 @@ impl App {
             integration_install_messages: Vec::new(),
             installed_plugins: load_plugin_registry(no_session),
             plugin_status_items: Vec::new(),
-            codex_context_used_percent: None,
+            context_used_percent: None,
             plugin_panes: std::collections::HashMap::new(),
             plugin_command_logs: Vec::new(),
             next_plugin_command_log_id: 1,
@@ -708,7 +708,7 @@ impl App {
             event_rx,
             last_git_remote_status_refresh: Instant::now() - GIT_REMOTE_STATUS_REFRESH_INTERVAL,
             next_plugin_status_refresh: Instant::now(),
-            next_codex_usage_refresh: Instant::now(),
+            next_context_usage_refresh: Instant::now(),
             git_refresh_in_flight: false,
             git_refresh_due_after_in_flight: false,
             git_status_cache: HashMap::new(),
@@ -920,7 +920,9 @@ impl App {
                 needs_render = true;
             }
 
-            self.sync_focus_events();
+            if self.sync_focus_events() {
+                needs_render = true;
+            }
             self.sync_session_save_schedule();
 
             let now = Instant::now();
@@ -4139,7 +4141,7 @@ mod tests {
         app.next_resize_poll = now + Duration::from_secs(5);
         app.next_auto_update_check = Some(now + Duration::from_secs(6));
         app.next_plugin_status_refresh = now + Duration::from_secs(7);
-        app.next_codex_usage_refresh = now + Duration::from_secs(7);
+        app.next_context_usage_refresh = now + Duration::from_secs(7);
 
         assert_eq!(
             app.next_loop_deadline(now, false),
@@ -4155,7 +4157,7 @@ mod tests {
         app.session_save_deadline = Some(now + Duration::from_secs(2));
         app.next_auto_update_check = Some(now + Duration::from_secs(6));
         app.next_plugin_status_refresh = now + Duration::from_secs(7);
-        app.next_codex_usage_refresh = now + Duration::from_secs(7);
+        app.next_context_usage_refresh = now + Duration::from_secs(7);
 
         assert_eq!(
             app.next_headless_loop_deadline_with_git_refresh(now, false, true),
@@ -4174,7 +4176,7 @@ mod tests {
         app.next_auto_update_check = None;
         app.session_save_deadline = None;
         app.next_plugin_status_refresh = now + Duration::from_secs(1);
-        app.next_codex_usage_refresh = now + Duration::from_secs(1);
+        app.next_context_usage_refresh = now + Duration::from_secs(1);
         app.state.workspaces.clear();
 
         assert_eq!(

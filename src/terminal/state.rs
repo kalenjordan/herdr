@@ -80,6 +80,9 @@ pub struct TerminalState {
     pub hook_authority: Option<HookAuthority>,
     pub agent_metadata: HashMap<String, AgentMetadata>,
     pub persisted_agent_session: Option<crate::agent_resume::PersistedAgentSession>,
+    /// Last live context-window usage percentage reported by the pane's agent
+    /// (agent label, used percent), e.g. from Claude's statusLine hook.
+    reported_context_used_percent: Option<(String, u8)>,
     pub manual_label: Option<String>,
     pub agent_name: Option<String>,
     hook_report_sequences: HashMap<String, u64>,
@@ -107,6 +110,7 @@ impl TerminalState {
             hook_authority: None,
             agent_metadata: HashMap::new(),
             persisted_agent_session: None,
+            reported_context_used_percent: None,
             manual_label: None,
             agent_name: None,
             hook_report_sequences: HashMap::new(),
@@ -1273,6 +1277,17 @@ impl TerminalState {
             .map(|session_ref| session_ref.value.as_str())
     }
 
+    pub(crate) fn set_reported_context_used_percent(&mut self, agent_label: String, percent: u8) {
+        self.reported_context_used_percent = Some((agent_label, percent.min(100)));
+    }
+
+    pub(crate) fn claude_context_used_percent(&self) -> Option<u8> {
+        self.reported_context_used_percent
+            .as_ref()
+            .filter(|(agent_label, _)| agent_label == "claude")
+            .map(|(_, percent)| *percent)
+    }
+
     pub fn full_lifecycle_hook_authority_active(&self) -> bool {
         self.live_full_lifecycle_hook_authority()
     }
@@ -1427,6 +1442,21 @@ mod tests {
         };
 
         assert_eq!(stabilize_agent_detection(detection), AgentState::Idle);
+    }
+
+    #[test]
+    fn reported_context_used_percent_is_scoped_to_claude() {
+        let mut terminal = test_terminal();
+        assert_eq!(terminal.claude_context_used_percent(), None);
+
+        terminal.set_reported_context_used_percent("codex".into(), 42);
+        assert_eq!(terminal.claude_context_used_percent(), None);
+
+        terminal.set_reported_context_used_percent("claude".into(), 42);
+        assert_eq!(terminal.claude_context_used_percent(), Some(42));
+
+        terminal.set_reported_context_used_percent("claude".into(), 150);
+        assert_eq!(terminal.claude_context_used_percent(), Some(100));
     }
 
     #[test]
