@@ -12,10 +12,22 @@ use crate::app::AppState;
 const MIN_TAB_WIDTH: u16 = 8;
 const NEW_TAB_WIDTH: u16 = 3;
 const TAB_SCROLL_BUTTON_WIDTH: u16 = 3;
+#[cfg(test)]
 pub(crate) fn tab_content_rect(ws: &crate::workspace::Workspace, area: Rect) -> Rect {
-    let reserved = dirty_status_label(ws)
-        .map(|label| display_width_u16(&label).saturating_add(2).min(area.width))
-        .unwrap_or(0);
+    tab_content_rect_with_status(ws, &[], None, area)
+}
+
+pub(crate) fn tab_content_rect_with_status(
+    ws: &crate::workspace::Workspace,
+    plugin_items: &[crate::plugin_status::PluginStatusItem],
+    codex_context_used_percent: Option<u8>,
+    area: Rect,
+) -> Rect {
+    let reserved = status_labels(ws, plugin_items, codex_context_used_percent)
+        .iter()
+        .map(|label| display_width_u16(label).saturating_add(2))
+        .sum::<u16>()
+        .min(area.width);
     Rect::new(
         area.x,
         area.y,
@@ -24,14 +36,56 @@ pub(crate) fn tab_content_rect(ws: &crate::workspace::Workspace, area: Rect) -> 
     )
 }
 
-fn dirty_status_label(ws: &crate::workspace::Workspace) -> Option<String> {
-    ws.git_dirty_count()
-        .filter(|count| *count > 0)
-        .map(|count| format!("dirty {count}"))
+fn git_status_label(ws: &crate::workspace::Workspace) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(count) = ws.git_dirty_count().filter(|count| *count > 0) {
+        parts.push(format!("●{count}"));
+    }
+    if let Some((ahead, behind)) = ws.git_ahead_behind() {
+        if ahead > 0 {
+            parts.push(format!("↑{ahead}"));
+        }
+        if behind > 0 {
+            parts.push(format!("↓{behind}"));
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join(" "))
 }
 
-fn dirty_status_rect(ws: &crate::workspace::Workspace, area: Rect) -> Rect {
-    let tab_area = tab_content_rect(ws, area);
+fn codex_usage_label(used: u8) -> String {
+    let filled = usize::from(used.min(100).div_ceil(10));
+    format!(
+        "{}{} {used}%",
+        "▰".repeat(filled),
+        "▱".repeat(10usize.saturating_sub(filled))
+    )
+}
+
+fn status_labels(
+    ws: &crate::workspace::Workspace,
+    plugin_items: &[crate::plugin_status::PluginStatusItem],
+    codex_context_used_percent: Option<u8>,
+) -> Vec<String> {
+    let mut labels = plugin_items
+        .iter()
+        .map(|item| item.label.clone())
+        .collect::<Vec<_>>();
+    if let Some(git) = git_status_label(ws) {
+        labels.push(git);
+    }
+    if let Some(used) = codex_context_used_percent {
+        labels.push(codex_usage_label(used));
+    }
+    labels
+}
+
+fn status_rect(
+    ws: &crate::workspace::Workspace,
+    plugin_items: &[crate::plugin_status::PluginStatusItem],
+    codex_context_used_percent: Option<u8>,
+    area: Rect,
+) -> Rect {
+    let tab_area = tab_content_rect_with_status(ws, plugin_items, codex_context_used_percent, area);
     Rect::new(
         tab_area.x + tab_area.width,
         area.y,
@@ -291,13 +345,39 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
         area,
     );
 
-    let dirty_rect = dirty_status_rect(ws, area);
-    if dirty_rect.width > 0 {
+    let status_rect = status_rect(
+        ws,
+        &app.plugin_status_items,
+        app.codex_context_used_percent,
+        area,
+    );
+    if status_rect.width > 0 {
+        let mut spans = app
+            .plugin_status_items
+            .iter()
+            .map(|item| {
+                ratatui::text::Span::styled(
+                    format!(" {} ", item.label),
+                    Style::default().fg(p.overlay1).bg(p.panel_bg),
+                )
+            })
+            .collect::<Vec<_>>();
+        if let Some(label) = git_status_label(ws) {
+            spans.push(ratatui::text::Span::styled(
+                format!(" {label} "),
+                Style::default().fg(p.overlay1).bg(p.panel_bg),
+            ));
+        }
+        if let Some(used) = app.codex_context_used_percent {
+            let color = if used > 30 { p.peach } else { p.overlay1 };
+            spans.push(ratatui::text::Span::styled(
+                format!(" {} ", codex_usage_label(used)),
+                Style::default().fg(color).bg(p.panel_bg),
+            ));
+        }
         frame.render_widget(
-            Paragraph::new(format!(" {} ", dirty_status_label(ws).unwrap_or_default()))
-                .style(Style::default().fg(p.yellow).bg(p.panel_bg))
-                .right_aligned(),
-            dirty_rect,
+            Paragraph::new(ratatui::text::Line::from(spans)).right_aligned(),
+            status_rect,
         );
     }
 
@@ -487,7 +567,7 @@ mod tests {
         let view = compute_tab_bar_view(&app.workspaces[0], tab_area, 0, true, false);
         app.view.tab_hit_areas = view.tab_hit_areas;
 
-        assert_eq!(tab_area, Rect::new(0, 0, 21, 1));
+        assert_eq!(tab_area, Rect::new(0, 0, 26, 1));
         let backend = TestBackend::new(30, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
@@ -495,7 +575,54 @@ mod tests {
             .unwrap();
 
         let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
-        assert!(row.ends_with(" dirty 3"), "tab row: {row:?}");
+        assert!(row.ends_with(" ●3"), "tab row: {row:?}");
+    }
+
+    #[test]
+    fn plugin_status_reserves_right_edge_and_renders() {
+        let mut app = AppState::test_new();
+        app.active = Some(0);
+        app.workspaces = vec![Workspace::test_new("test")];
+        app.plugin_status_items = vec![crate::plugin_status::PluginStatusItem {
+            plugin_id: "example.notify".to_string(),
+            id: "notifications".to_string(),
+            label: "notifications off".to_string(),
+            severity: crate::plugin_status::PluginStatusSeverity::Warning,
+            priority: 50,
+        }];
+        app.view.tab_bar_rect = Rect::new(0, 0, 40, 1);
+        let tab_area = tab_content_rect_with_status(
+            &app.workspaces[0],
+            &app.plugin_status_items,
+            app.codex_context_used_percent,
+            app.view.tab_bar_rect,
+        );
+        assert_eq!(tab_area, Rect::new(0, 0, 21, 1));
+
+        let backend = TestBackend::new(40, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
+            .unwrap();
+        let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
+        assert!(row.ends_with(" notifications off"), "tab row: {row:?}");
+    }
+
+    #[test]
+    fn codex_usage_renders_as_a_progress_bar() {
+        let mut app = AppState::test_new();
+        app.active = Some(0);
+        app.workspaces = vec![Workspace::test_new("test")];
+        app.codex_context_used_percent = Some(31);
+        app.view.tab_bar_rect = Rect::new(0, 0, 40, 1);
+
+        let backend = TestBackend::new(40, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
+            .unwrap();
+        let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
+        assert!(row.ends_with(" ▰▰▰▰▱▱▱▱▱▱ 31%"), "tab row: {row:?}");
     }
 
     #[test]

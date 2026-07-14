@@ -1255,6 +1255,24 @@ impl TerminalState {
         self.detected_agent
     }
 
+    pub(crate) fn codex_session_id(&self) -> Option<&str> {
+        self.hook_authority
+            .as_ref()
+            .and_then(|authority| {
+                (authority.agent_label == "codex")
+                    .then_some(authority.session_ref.as_ref())
+                    .flatten()
+            })
+            .or_else(|| {
+                self.persisted_agent_session
+                    .as_ref()
+                    .filter(|session| session.agent == "codex")
+                    .map(|session| &session.session_ref)
+            })
+            .filter(|session_ref| session_ref.kind == crate::agent_resume::AgentSessionRefKind::Id)
+            .map(|session_ref| session_ref.value.as_str())
+    }
+
     pub fn full_lifecycle_hook_authority_active(&self) -> bool {
         self.live_full_lifecycle_hook_authority()
     }

@@ -87,7 +87,7 @@ pub(crate) use self::{
         mobile_switcher_workspace_doc_range, MobileSwitcherTarget,
     },
     panes::{apply_pane_chrome, pane_inner_rect, pane_is_scrolled_back},
-    tabs::{compute_tab_bar_view, tab_content_rect},
+    tabs::{compute_tab_bar_view, tab_content_rect_with_status},
     widgets::{centered_popup_rect, modal_stack_areas},
 };
 use crate::app::state::ViewLayout;
@@ -195,7 +195,12 @@ fn desktop_tab_bar_and_terminal_area(
 ) -> (Rect, Rect) {
     let hide_single_tab_bar = app.hide_tab_bar_when_single_tab
         && ws.tabs.len() == 1
-        && ws.git_dirty_count().unwrap_or(0) == 0;
+        && ws.git_dirty_count().unwrap_or(0) == 0
+        && ws
+            .git_ahead_behind()
+            .is_none_or(|(ahead, behind)| ahead == 0 && behind == 0)
+        && app.plugin_status_items.is_empty()
+        && app.codex_context_used_percent.is_none();
     if !hide_single_tab_bar && main_area.height > 1 {
         let [tab_bar_rect, terminal_area] =
             Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(main_area);
@@ -260,7 +265,12 @@ fn compute_view_internal(
         .map(|ws| {
             compute_tab_bar_view(
                 ws,
-                tab_content_rect(ws, tab_bar_rect),
+                tab_content_rect_with_status(
+                    ws,
+                    &app.plugin_status_items,
+                    app.codex_context_used_percent,
+                    tab_bar_rect,
+                ),
                 app.tab_scroll,
                 app.tab_scroll_follow_active,
                 app.mouse_capture,

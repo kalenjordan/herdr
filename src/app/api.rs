@@ -148,6 +148,10 @@ impl App {
                     crate::api::schema::PluginCommandStatus::Failed
                 };
             }
+            if self.refresh_plugin_status() {
+                self.render_dirty.store(true, Ordering::Release);
+                self.render_notify.notify_one();
+            }
             return;
         }
 

@@ -4,8 +4,9 @@ use crossterm::terminal;
 
 use super::{
     background_update_check_enabled, repeat_key_identity, App, Mode, ANIMATION_INTERVAL,
-    AUTO_UPDATE_CHECK_INTERVAL, GIT_REMOTE_STATUS_REFRESH_INTERVAL, MIN_RENDER_INTERVAL,
-    RESIZE_POLL_INTERVAL, SELECTION_AUTOSCROLL_INTERVAL,
+    AUTO_UPDATE_CHECK_INTERVAL, CODEX_USAGE_REFRESH_INTERVAL, GIT_REMOTE_STATUS_REFRESH_INTERVAL,
+    MIN_RENDER_INTERVAL, PLUGIN_STATUS_REFRESH_INTERVAL, RESIZE_POLL_INTERVAL,
+    SELECTION_AUTOSCROLL_INTERVAL,
 };
 use crate::events::AppEvent;
 use crate::workspace::{GitStatusCacheEntry, Workspace, WorkspaceGitStatus};
@@ -278,6 +279,16 @@ impl App {
 
         self.start_git_status_refresh_if_due(now);
 
+        if now >= self.next_plugin_status_refresh {
+            changed |= self.refresh_plugin_status();
+            self.next_plugin_status_refresh = now + PLUGIN_STATUS_REFRESH_INTERVAL;
+        }
+
+        if now >= self.next_codex_usage_refresh {
+            changed |= self.refresh_codex_usage();
+            self.next_codex_usage_refresh = now + CODEX_USAGE_REFRESH_INTERVAL;
+        }
+
         if self
             .next_auto_update_check
             .is_some_and(|deadline| now >= deadline)
@@ -514,6 +525,34 @@ impl App {
                 cache_updates: output.cache_updates,
             });
         });
+    }
+
+    pub(crate) fn refresh_plugin_status(&mut self) -> bool {
+        let items = crate::plugin_status::load(&self.state.installed_plugins);
+        if items == self.state.plugin_status_items {
+            return false;
+        }
+        self.state.plugin_status_items = items;
+        true
+    }
+
+    pub(crate) fn refresh_codex_usage(&mut self) -> bool {
+        let used = self
+            .state
+            .active
+            .and_then(|ws_idx| self.state.workspaces.get(ws_idx))
+            .and_then(|ws| {
+                let pane_id = ws.focused_pane_id()?;
+                ws.active_tab()?.panes.get(&pane_id)
+            })
+            .and_then(|pane| self.state.terminals.get(&pane.attached_terminal_id))
+            .and_then(|terminal| terminal.codex_session_id())
+            .and_then(crate::codex_usage::load_context_used_percent);
+        if used == self.state.codex_context_used_percent {
+            return false;
+        }
+        self.state.codex_context_used_percent = used;
+        true
     }
 
     pub(crate) fn mark_git_status_refresh_due(&mut self, now: Instant) {
