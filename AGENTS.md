@@ -106,6 +106,19 @@ server:
 env -u HERDR_SOCKET_PATH -u HERDR_CLIENT_SOCKET_PATH cargo run -- <command>
 ```
 
+Never point `herdr server live-handoff --import-exe` (or any action that
+replaces the actual running production server) at a debug build. Debug
+builds are for the isolated `herdr-dev` flow above only; a live handoff of
+the real running server must use a `cargo build --release` binary. After
+running a live handoff, confirm it actually completed a true PTY-preserving
+import before treating it as done: check the server log
+(`~/.config/herdr/herdr-server.log`) for `handoff import ready panes=N`
+between the `starting live handoff` and `live handoff completed` lines. If
+that line is missing, the old server exited without a confirmed import and
+whatever picked up the socket afterward likely cold-started from
+`session.json`, spawning fresh processes for every pane instead of
+reattaching to what was running.
+
 ## Local Can Machine Workflow
 
 This section applies only on Can's workstation or Windows VM setup. If the
