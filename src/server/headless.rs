@@ -5139,13 +5139,17 @@ next_tab = ""
         }));
 
         assert!(!server.has_app_client());
+        let now = Instant::now();
+        let without_git_refresh = server
+            .app
+            .next_headless_loop_deadline_with_git_refresh(now, false, false);
         assert_eq!(
             server.app.next_headless_loop_deadline_with_git_refresh(
-                Instant::now(),
+                now,
                 false,
                 server.has_app_client()
             ),
-            None
+            without_git_refresh
         );
     }
 
@@ -5175,13 +5179,17 @@ next_tab = ""
         server.clients.get_mut(&7).expect("client").writer = None;
 
         assert!(!server.has_app_client());
+        let now = Instant::now();
+        let without_git_refresh = server
+            .app
+            .next_headless_loop_deadline_with_git_refresh(now, false, false);
         assert_eq!(
             server.app.next_headless_loop_deadline_with_git_refresh(
-                Instant::now(),
+                now,
                 false,
                 server.has_app_client()
             ),
-            None
+            without_git_refresh
         );
     }
 

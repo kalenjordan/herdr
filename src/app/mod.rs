@@ -4265,6 +4265,8 @@ mod tests {
         let mut app = test_app();
         let now = Instant::now();
         app.next_resize_poll = now + Duration::from_millis(300);
+        app.next_plugin_status_refresh = now + Duration::from_secs(7);
+        app.next_context_usage_refresh = now + Duration::from_secs(7);
         app.selection_autoscroll_deadline = Some(now + Duration::from_millis(5));
         app.next_animation_tick = Some(now + Duration::from_millis(100));
         app.session_save_deadline = Some(now + Duration::from_millis(200));

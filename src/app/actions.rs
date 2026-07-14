@@ -1088,24 +1088,33 @@ impl AppState {
     }
 
     pub(crate) fn open_done_or_blocked_switcher(&mut self) -> bool {
-        let candidates: Vec<_> =
-            self.workspaces
-                .iter()
-                .flat_map(|ws| {
-                    ws.tabs.iter().filter_map(|tab| {
-                        let (state, seen) = tab_aggregate_state(tab, &self.terminals);
-                        ((state == AgentState::Blocked) || (state == AgentState::Idle && !seen))
-                            .then(|| crate::app::state::WorkspaceTabTarget {
-                                workspace_id: ws.id.clone(),
-                                tab_number: tab.number,
-                            })
-                    })
+        let original = self.active_workspace_tab_target();
+        let mut candidates: Vec<_> = self
+            .workspaces
+            .iter()
+            .flat_map(|ws| {
+                ws.tabs.iter().filter_map(|tab| {
+                    let (state, seen) = tab_aggregate_state(tab, &self.terminals);
+                    let target = crate::app::state::WorkspaceTabTarget {
+                        workspace_id: ws.id.clone(),
+                        tab_number: tab.number,
+                    };
+                    ((state == AgentState::Blocked) || (state == AgentState::Idle && !seen))
+                        .then_some(target)
+                        .filter(|target| original.as_ref() != Some(target))
                 })
-                .collect();
+            })
+            .collect();
+        let selected = if candidates.is_empty() { 0 } else { 1 };
+        if !candidates.is_empty() {
+            if let Some(original) = original {
+                candidates.insert(0, original);
+            }
+        }
         self.recent_workspace = Some(crate::app::state::RecentWorkspaceState {
             kind: crate::app::state::WorkspaceSwitcherKind::DoneOrBlocked,
             candidates,
-            selected: 0,
+            selected,
         });
         self.mode = crate::app::state::Mode::RecentWorkspace;
         true
@@ -2490,7 +2499,7 @@ fn path_spans(row: &str, cells: &[TextCell], cwd: Option<&Path>) -> Vec<PathSpan
     let mut spans = Vec::new();
     for span in quoted_path_spans(cells)
         .into_iter()
-        .chain(token_spans(cells).into_iter())
+        .chain(token_spans(cells))
     {
         if spans_overlap_any(
             span,
@@ -4664,15 +4673,19 @@ mod tests {
             .seen = false;
 
         assert!(state.open_done_or_blocked_switcher());
-        let candidates = &state.recent_workspace.as_ref().unwrap().candidates;
+        let switcher = state.recent_workspace.as_ref().unwrap();
+        let candidates = &switcher.candidates;
 
-        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates.len(), 3);
         assert_eq!(candidates[0].workspace_id, state.workspaces[0].id);
+        assert_eq!(candidates[0].tab_number, state.workspaces[0].tabs[0].number);
+        assert_eq!(candidates[1].workspace_id, state.workspaces[0].id);
         assert_eq!(
-            candidates[0].tab_number,
+            candidates[1].tab_number,
             state.workspaces[0].tabs[blocked_tab].number
         );
-        assert_eq!(candidates[1].workspace_id, state.workspaces[1].id);
+        assert_eq!(candidates[2].workspace_id, state.workspaces[1].id);
+        assert_eq!(switcher.selected, 1);
         state.assert_invariants_for_test();
     }
 
