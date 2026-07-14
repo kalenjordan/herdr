@@ -35,8 +35,8 @@ pub(crate) const HEADLESS_ANIMATION_TICK_STEP: u32 = 8;
 pub(crate) const SELECTION_AUTOSCROLL_INTERVAL: Duration = Duration::from_millis(30);
 const RESIZE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const GIT_REMOTE_STATUS_REFRESH_INTERVAL: Duration = Duration::from_millis(1500);
-const PLUGIN_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
-const CODEX_USAGE_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+pub(crate) const PLUGIN_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+pub(crate) const CODEX_USAGE_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const AUTO_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
 const PENDING_AGENT_RESUME_THEME_WAIT: Duration = Duration::from_millis(750);
 const SESSION_SAVE_DEBOUNCE: Duration = Duration::from_secs(5);
@@ -4138,6 +4138,8 @@ mod tests {
         app.session_save_deadline = Some(now + Duration::from_secs(2));
         app.next_resize_poll = now + Duration::from_secs(5);
         app.next_auto_update_check = Some(now + Duration::from_secs(6));
+        app.next_plugin_status_refresh = now + Duration::from_secs(7);
+        app.next_codex_usage_refresh = now + Duration::from_secs(7);
 
         assert_eq!(
             app.next_loop_deadline(now, false),
@@ -4152,6 +4154,8 @@ mod tests {
         app.next_resize_poll = now + Duration::from_millis(100);
         app.session_save_deadline = Some(now + Duration::from_secs(2));
         app.next_auto_update_check = Some(now + Duration::from_secs(6));
+        app.next_plugin_status_refresh = now + Duration::from_secs(7);
+        app.next_codex_usage_refresh = now + Duration::from_secs(7);
 
         assert_eq!(
             app.next_headless_loop_deadline_with_git_refresh(now, false, true),
@@ -4160,7 +4164,7 @@ mod tests {
     }
 
     #[test]
-    fn headless_next_loop_deadline_returns_none_when_resize_poll_is_only_deadline() {
+    fn headless_next_loop_deadline_includes_status_refresh() {
         let mut app = test_app();
         let now = Instant::now();
         app.next_resize_poll = now - Duration::from_millis(1);
@@ -4169,11 +4173,13 @@ mod tests {
         app.next_animation_tick = None;
         app.next_auto_update_check = None;
         app.session_save_deadline = None;
+        app.next_plugin_status_refresh = now + Duration::from_secs(1);
+        app.next_codex_usage_refresh = now + Duration::from_secs(1);
         app.state.workspaces.clear();
 
         assert_eq!(
             app.next_headless_loop_deadline_with_git_refresh(now, false, true),
-            None
+            Some(now + Duration::from_secs(1))
         );
     }
 

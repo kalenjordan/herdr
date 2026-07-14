@@ -3690,6 +3690,16 @@ impl HeadlessServer {
             self.app.start_git_status_refresh_if_due(now);
         }
 
+        if now >= self.app.next_plugin_status_refresh {
+            changed |= self.app.refresh_plugin_status();
+            self.app.next_plugin_status_refresh = now + app::PLUGIN_STATUS_REFRESH_INTERVAL;
+        }
+
+        if now >= self.app.next_codex_usage_refresh {
+            changed |= self.app.refresh_codex_usage();
+            self.app.next_codex_usage_refresh = now + app::CODEX_USAGE_REFRESH_INTERVAL;
+        }
+
         if self
             .app
             .next_auto_update_check
@@ -5520,6 +5530,25 @@ next_tab = ""
 
         assert!(!server.handle_scheduled_tasks_headless(now, false));
         assert_eq!(server.app.next_agent_manifest_update_check, None);
+    }
+
+    #[test]
+    fn headless_scheduled_tasks_advance_status_refresh_deadlines() {
+        let mut server = test_headless_server();
+        let now = Instant::now();
+        server.app.next_plugin_status_refresh = now;
+        server.app.next_codex_usage_refresh = now;
+
+        server.handle_scheduled_tasks_headless(now, false);
+
+        assert_eq!(
+            server.app.next_plugin_status_refresh,
+            now + app::PLUGIN_STATUS_REFRESH_INTERVAL
+        );
+        assert_eq!(
+            server.app.next_codex_usage_refresh,
+            now + app::CODEX_USAGE_REFRESH_INTERVAL
+        );
     }
 
     #[tokio::test]

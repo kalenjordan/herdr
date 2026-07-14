@@ -53,12 +53,7 @@ fn git_status_label(ws: &crate::workspace::Workspace) -> Option<String> {
 }
 
 fn codex_usage_label(used: u8) -> String {
-    let filled = usize::from(used.min(100).div_ceil(10));
-    format!(
-        "{}{} {used}%",
-        "▰".repeat(filled),
-        "▱".repeat(10usize.saturating_sub(filled))
-    )
+    format!("{}%", used.min(100))
 }
 
 fn status_labels(
@@ -369,7 +364,7 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
             ));
         }
         if let Some(used) = app.codex_context_used_percent {
-            let color = if used > 30 { p.peach } else { p.overlay1 };
+            let color = if used > 50 { p.peach } else { p.overlay1 };
             spans.push(ratatui::text::Span::styled(
                 format!(" {} ", codex_usage_label(used)),
                 Style::default().fg(color).bg(p.panel_bg),
@@ -609,7 +604,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_usage_renders_as_a_progress_bar() {
+    fn codex_usage_renders_as_a_percentage() {
         let mut app = AppState::test_new();
         app.active = Some(0);
         app.workspaces = vec![Workspace::test_new("test")];
@@ -622,7 +617,7 @@ mod tests {
             .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
             .unwrap();
         let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
-        assert!(row.ends_with(" ▰▰▰▰▱▱▱▱▱▱ 31%"), "tab row: {row:?}");
+        assert!(row.ends_with(" 31%"), "tab row: {row:?}");
     }
 
     #[test]

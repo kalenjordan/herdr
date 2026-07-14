@@ -606,6 +606,8 @@ impl App {
             self.state.next_pending_agent_notification_deadline(),
             self.copy_feedback_deadline,
             self.next_animation_tick,
+            Some(self.next_plugin_status_refresh),
+            Some(self.next_codex_usage_refresh),
             include_git_refresh
                 .then(|| self.git_refresh_deadline())
                 .flatten(),
@@ -836,10 +838,12 @@ mod tests {
         app.state.workspaces.push(Workspace::test_new("test"));
         let now = Instant::now();
         app.last_git_remote_status_refresh = now - super::super::GIT_REMOTE_STATUS_REFRESH_INTERVAL;
+        app.next_plugin_status_refresh = now + Duration::from_secs(1);
+        app.next_codex_usage_refresh = now + Duration::from_secs(1);
 
         assert_eq!(
             app.next_headless_loop_deadline_with_git_refresh(now, false, false),
-            None
+            Some(now + Duration::from_secs(1))
         );
         assert_eq!(
             app.next_headless_loop_deadline_with_git_refresh(now, false, true),

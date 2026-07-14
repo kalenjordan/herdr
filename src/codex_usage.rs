@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 const TRANSCRIPT_TAIL_BYTES: u64 = 1024 * 1024;
+const CODEX_BASELINE_TOKENS: u64 = 12_000;
 static SESSION_PATHS: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
 
 #[derive(Deserialize)]
@@ -91,8 +92,15 @@ fn read_latest_context_used(path: &Path) -> Option<u8> {
         }
         let info = record.payload.info?;
         let used = info.last_token_usage?.total_tokens;
-        let window = info.model_context_window.filter(|window| *window > 0)?;
-        Some(((used.saturating_mul(100) / window).min(100)) as u8)
+        let window = info
+            .model_context_window
+            .filter(|window| *window > CODEX_BASELINE_TOKENS)?;
+        let effective_window = window - CODEX_BASELINE_TOKENS;
+        let effective_used = used.saturating_sub(CODEX_BASELINE_TOKENS);
+        let remaining = effective_window.saturating_sub(effective_used);
+        let remaining_percent =
+            (remaining.saturating_mul(100) + effective_window / 2) / effective_window;
+        Some(100u8.saturating_sub(remaining_percent.min(100) as u8))
     })
 }
 
@@ -122,11 +130,24 @@ mod tests {
             &path,
             concat!(
                 "{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"last_token_usage\":{\"total_tokens\":20},\"model_context_window\":100}}}\n",
-                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"last_token_usage\":{\"total_tokens\":31},\"model_context_window\":100}}}\n"
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"last_token_usage\":{\"total_tokens\":89684},\"model_context_window\":258400}}}\n"
             ),
         )
         .unwrap();
-        assert_eq!(read_latest_context_used(&path), Some(31));
+        assert_eq!(read_latest_context_used(&path), Some(32));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn matches_codex_baseline_and_rounding() {
+        let path =
+            std::env::temp_dir().join(format!("codex-usage-rounding-{}.jsonl", std::process::id()));
+        std::fs::write(
+            &path,
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"last_token_usage\":{\"total_tokens\":94462},\"model_context_window\":258400}}}\n",
+        )
+        .unwrap();
+        assert_eq!(read_latest_context_used(&path), Some(33));
         let _ = std::fs::remove_file(path);
     }
 }
