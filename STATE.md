@@ -1,95 +1,94 @@
 # Current objective
 
-Finish and live-validate tab-aware Command-E and Command-D switchers, then
-commit the accepted Herdr changes on Kalen's fork `master` when requested.
+Finish promotion of Kalen's Herdr customizations. The implementation is
+committed and live; the remaining decisions are whether to commit this
+checkpoint separately and push fork `master` so the installed behavior is
+upgrade-safe.
 
-# Repository state
+# Completed work
 
-- Checkout: `/Users/kalen/repos/herdr`, branch `master`, four commits ahead of
-  `origin/master`.
-- Latest commit: `f088b4e feat: add recent workspace switcher`.
-- The tab-aware extension is uncommitted. Modified Herdr files are the next
-  changelog/config docs/API schema, switcher state/actions/input/render/config,
-  and protocol expectation tests shown by `git status`.
-- No push, upstream PR, or release is authorized. Until pushed to fork
-  `master`, the local commits and live build are not upgrade-safe.
-- The separate dotfiles repo has pre-existing unrelated modifications. This
-  task additionally changes only `ghostty/config.ghostty`; preserve all other
-  dotfiles changes.
+- Persistent top-right chrome now shows neutral-gray notification state,
+  compact Git state (`●N ↑N ↓N`), and focused Codex context usage.
+- Codex usage is a percentage only. It refreshes every five seconds, stays gray
+  through 50%, and turns orange above 50%.
+- Codex usage matches Codex's own calculation: read the latest
+  `last_token_usage` from the matched rollout, subtract Codex's 12,000-token
+  baseline from usage and window, round remaining percent, then display
+  `100 - remaining`.
+- Headless server scheduling now executes and wakes for plugin and Codex status
+  refreshes. This fixed the missing usage indicator in the normal installed
+  server architecture.
+- The built-in Codex integration is installed at
+  `~/.codex/herdr-agent-state.sh` and reports exact session IDs. No cwd-based
+  rollout fallback was added.
+- cmux Codex hooks were removed. `~/.codex/hooks.json` now retains only Herdr's
+  `SessionStart` hook and Kalen's `codex-herdr-tab-name` hook.
+- Command-Shift-N remains configured for `herdr-focus-notify.toggle`. The linked
+  plugin executable disappeared once and was rebuilt; action invocation then
+  succeeded. Notifications currently end in the off state.
+- Earlier committed features remain live: dirty/ahead/behind status, Command-E
+  recent-tab switching, Command-D done/blocked-tab switching, and tab-aware
+  targets with current tab first.
 
-# Implemented behavior
+# Repository and promotion state
 
-- Command-E is now tab-aware. MRU entries use stable workspace ID + non-reused
-  public tab number, so tabs within one workspace are independently navigable
-  and tab reorder/rename is safe.
-- Command-D (`keys.done_or_blocked_workspace`) opens the same hold-to-cycle
-  overlay filtered to tabs containing a blocked agent or unseen idle/done
-  agent. It defaults to `cmd+d`.
-- Multi-tab labels render as `workspace · tab`; single-tab workspaces retain
-  the workspace-only label. Releasing Command commits, matching Command-E.
-- The existing scoped standalone-modifier reporting remains active only while
-  the switcher is open. Protocol remains 17.
-- Local Herdr config now explicitly includes
-  `done_or_blocked_workspace = "cmd+d"`; `herdr server reload-config` returned
-  `status: applied` with no diagnostics.
-- The optimized build is installed at `~/.local/bin/herdr` and a safe
-  installed-path live handoff completed on protocol 17.
-
-# Ghostty conflict and unresolved live test
-
-- Ghostty intercepted Command-D before Herdr. Its tracked config previously
-  translated it to `text:\x02gd`, which opened the full Herdr Navigator with
-  the done filter. The screenshot confirmed that behavior.
-- Ghostty's built-in Command-D is `new_split:right`. Changing the override to
-  `unbind` resulted in no Herdr action.
-- Current uncommitted dotfiles change is:
-  `keybind = super+d=text:\x1b[100;9u`, an explicit Kitty Super-D press event.
-  `ghostty +show-config` confirms that effective binding.
-- Kalen must reload Ghostty with Command-Shift-Comma and test Command-D. It is
-  not yet confirmed whether standalone Command release is delivered after the
-  synthetic press. Do not commit either repo until this interaction is
-  accepted and commit scope/messages are aligned.
-
-# Verification
-
-- `ZIG=/opt/homebrew/Cellar/zig@0.15/0.15.2/bin/zig cargo test --quiet`:
-  all 2,514 core tests passed. The `api_ping` integration target then had 9/11
-  pass: the known `events_subscribe_streams_output_and_agent_status_events`
-  timeout recurred, and a protocol-16 expectation failed.
-- The protocol expectation was updated to 17. Focused
-  `cargo test --quiet --test api_ping ping_over_socket_returns_version` passed.
-- `HERDR_UPDATE_API_SCHEMA=1 ... cargo test --quiet generated_protocol_schema_artifact_is_current`
-  passed and updated `docs/next/api/herdr-api.schema.json` to protocol 17.
-- Focused recent-workspace and done-or-blocked tests passed, including stable
-  tab identity, exact tab activation, filtering, modifier routing, and state
-  invariants.
-- `cargo fmt --all`, `git diff --check`, and the optimized release build with
-  Zig 0.15.2 passed.
-- A filtered `cli_wrapper` command matched zero tests; those protocol-17
-  expectations compile but have not been run under their exact test name.
-- `just check` remains unavailable because `just` is not installed.
+- Checkout: `/Users/kalen/repos/herdr`, branch `master`, eight commits ahead of
+  fork `origin/master`.
+- Latest commit: `cf15fa6 fix: align codex context usage status`.
+- The latest commit includes the headless scheduler fix, exact Codex percentage,
+  percentage-only rendering, and 50% color threshold.
+- `STATE.md` is the only Herdr working-tree modification. It was intentionally
+  excluded from the feature commit and has not been committed.
+- Nothing has been pushed. The eight local fork commits are not upgrade-safe
+  until Kalen explicitly authorizes pushing `master` to `origin/master`.
+- `origin` is `git@github.com:kalenjordan/herdr.git`; `upstream` is
+  `https://github.com/ogulcancelik/herdr.git`. Do not push upstream.
+- Dotfiles `master` is two commits ahead. Existing modifications remain in
+  `.codex/config.toml`, `.codex/hooks.json`, `claude/settings.json`, and
+  `zsh/.zshrc`; preserve them.
+- `/Users/kalen/repos/herdr-focus-notify` is clean on
+  `kalen/status-toggle`, tracking its origin. Its release executable currently
+  exists because it was rebuilt after a missing-binary failure.
 
 # Remaining work
 
-1. Reload Ghostty and live-test Command-D press, repeated D cycling, and
-   Command release. Also verify Command-E lists Commerce Leak's two tabs
-   separately and activates the selected tab.
-2. If synthetic Command-D opens but release does not commit, determine the
-   Ghostty release-sequence mapping or choose a non-conflicting native chord.
-3. Rerun focused tests after any fix, then build/install and perform the known
-   safe handoff using `~/.local/bin/herdr` as both installed and import path.
-4. When Kalen requests commits, propose lowercase conventional messages. The
-   Herdr and dotfiles changes are separate repositories and should be committed
-   separately. Do not push without explicit authorization.
+1. If Kalen wants the checkpoint tracked, propose
+   `docs: update development checkpoint`, get alignment, and commit only
+   `STATE.md`.
+2. Obtain explicit authorization before pushing fork `master`. Once authorized,
+   push only to `origin/master` and verify local/remote alignment.
+3. If Command-Shift-N fails again, inspect plugin logs first. A prior failure was
+   `target/release/herdr-focus-notify: No such file or directory`; rebuilding
+   the linked plugin fixed it.
+
+# Verification evidence
+
+- Final pre-commit validation passed with Zig 0.15.2:
+  - `cargo fmt --check`
+  - focused `codex_usage` tests: 4 passed
+  - `headless_scheduled_tasks_advance_status_refresh_deadlines`: passed
+  - focused `headless_next_loop_deadline` tests: 2 passed
+  - `cargo check --quiet`
+  - `git diff --check`
+- Optimized release build passed with
+  `ZIG=/opt/homebrew/opt/zig@0.15/bin/zig cargo build --release`.
+- Safe installed-path live handoff passed on protocol 17/version 0.7.3 without
+  restarting sessions. `herdr status` currently reports compatible client and
+  server with no restart needed.
+- The visible Codex percentage was live-checked against transcript values and
+  official Codex source behavior.
+- `herdr integration status` reports `codex: current (v6)`.
+- `just check` was not run because `just` is unavailable.
 
 # Important files
 
-- Switcher state/actions: `src/app/state.rs`, `src/app/actions.rs`
-- Input/config: `src/app/input/mod.rs`, `src/app/input/navigate.rs`,
-  `src/config/model.rs`, `src/config/keybinds.rs`, `src/main.rs`
-- Rendering: `src/ui.rs`
-- Next docs/schema: `docs/next/CHANGELOG.md`,
-  `docs/next/website/src/content/docs/configuration.mdx`,
-  `docs/next/api/herdr-api.schema.json`
-- Local Herdr config: `~/.config/herdr/config.toml`
-- Ghostty config: `/Users/kalen/repos/dotfiles/ghostty/config.ghostty`
+- Codex reader and calculation: `src/codex_usage.rs`
+- Headless refresh scheduling: `src/server/headless.rs`, `src/app/runtime.rs`,
+  `src/app/mod.rs`
+- Persistent status rendering: `src/ui/tabs.rs`, `src/ui.rs`
+- Generic plugin status: `src/plugin_status.rs`
+- Notification plugin: `/Users/kalen/repos/herdr-focus-notify`
+- Herdr and Ghostty shortcuts:
+  `/Users/kalen/repos/dotfiles/herdr/config.toml` and
+  `/Users/kalen/repos/dotfiles/ghostty/config.ghostty`
+- Codex hooks: `~/.codex/hooks.json`
