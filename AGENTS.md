@@ -149,6 +149,16 @@ manual testing, reset `C:\work\repo` back to a clean checkout before finishing.
 
 ## Local Kalen Machine Workflow
 
+When Kalen asks to see a newly implemented Herdr code change, or says a local
+change is not taking effect, handle the deployment directly. Do not suggest
+running a separate debug Herdr instance. Validate the relevant change, build
+the release binary with the repository-required Zig version, install that
+exact binary to `~/.local/bin/herdr`, and use a release-binary live handoff when
+the running server must be updated. Verify the server log contains
+`handoff import ready panes=N` before reporting success. If the change also
+requires restarting or re-executing the TUI client, handle that through the
+supported production flow when possible and state clearly what remains.
+
 When Kalen says "disable notifications," set
 `HERDR_FOCUS_NOTIFY_ENABLED=0` in
 `~/.config/herdr/plugins/config/herdr-focus-notify/.env`. When Kalen says
