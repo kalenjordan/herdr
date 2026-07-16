@@ -43,6 +43,9 @@ pub struct Tab {
     pub layout: TileLayout,
     /// Pane viewport state — always present, testable without PTYs.
     pub panes: HashMap<PaneId, PaneState>,
+    /// State-change sequence when this tab most recently entered the
+    /// done-or-blocked attention queue.
+    pub(crate) attention_since_seq: Option<u64>,
     #[cfg(test)]
     pub runtimes: HashMap<PaneId, TerminalRuntime>,
     pub zoomed: bool,
@@ -173,6 +176,7 @@ impl Tab {
                 root_pane: root_id,
                 layout,
                 panes,
+                attention_since_seq: None,
                 #[cfg(test)]
                 runtimes: HashMap::new(),
                 zoomed: false,
@@ -447,6 +451,7 @@ impl Tab {
             root_pane: pane_id,
             layout: TileLayout::from_saved(Node::Pane(pane_id), pane_id),
             panes,
+            attention_since_seq: None,
             #[cfg(test)]
             runtimes: HashMap::new(),
             zoomed: false,

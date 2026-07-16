@@ -205,7 +205,7 @@ next_tab = ["prefix+n", "ctrl+alt+]"]
 
 `recent_workspace` opens a most-recently-used workspace overlay. Press the shortcut again while holding Command to cycle, then release Command to switch. `esc` cancels and `enter` switches immediately for terminals that do not report modifier release.
 
-`done_or_blocked_workspace` opens the same switcher filtered to tabs containing a done or blocked agent. Press Command-D again to cycle, then release Command to switch.
+`done_or_blocked_workspace` opens the same switcher filtered to tabs containing a done or blocked agent, ordered oldest-waiting first. Press Command-D again to cycle, then release Command to switch.
 
 `remote_image_paste` is only active in `herdr --remote`. It is the local-client shortcut that sends a local clipboard image to the remote pane. Set it to an empty string to disable the raw-key shortcut; remote terminal paste-image signals still work when the outer terminal sends them.
 

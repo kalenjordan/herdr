@@ -821,6 +821,17 @@ fn tab_aggregate_state(
     (aggregate, seen)
 }
 
+fn tab_needs_attention(
+    tab: &crate::workspace::Tab,
+    terminals: &std::collections::HashMap<
+        crate::terminal::TerminalId,
+        crate::terminal::TerminalState,
+    >,
+) -> bool {
+    let (state, seen) = tab_aggregate_state(tab, terminals);
+    state == AgentState::Blocked || (state == AgentState::Idle && !seen)
+}
+
 fn state_priority(state: AgentState, seen: bool) -> u8 {
     match (state, seen) {
         (AgentState::Blocked, _) => 5,
@@ -928,7 +939,15 @@ impl AppState {
                     .get_mut(&terminal_id)?
                     .expire_agent_metadata_at(scheduled_deadline, now)?;
                 let change = mutation.effective_state_change?;
+                if change.previous_state != change.state {
+                    self.next_agent_state_change_seq += 1;
+                    if let Some(terminal) = self.terminals.get_mut(&terminal_id) {
+                        terminal.last_agent_state_change_seq =
+                            Some(self.next_agent_state_change_seq);
+                    }
+                }
                 let seen = self.apply_pane_state_change(ws_idx, pane_id, &change)?;
+                self.sync_tab_attention_queue(ws_idx, pane_id);
                 let update = PaneStateUpdate {
                     pane_id,
                     ws_idx,
@@ -1094,17 +1113,18 @@ impl AppState {
             .iter()
             .flat_map(|ws| {
                 ws.tabs.iter().filter_map(|tab| {
-                    let (state, seen) = tab_aggregate_state(tab, &self.terminals);
                     let target = crate::app::state::WorkspaceTabTarget {
                         workspace_id: ws.id.clone(),
                         tab_number: tab.number,
                     };
-                    ((state == AgentState::Blocked) || (state == AgentState::Idle && !seen))
-                        .then_some(target)
-                        .filter(|target| original.as_ref() != Some(target))
+                    tab_needs_attention(tab, &self.terminals)
+                        .then_some((tab.attention_since_seq, target))
+                        .filter(|(_, target)| original.as_ref() != Some(target))
                 })
             })
             .collect();
+        candidates.sort_by_key(|(sequence, _)| sequence.unwrap_or(u64::MAX));
+        let mut candidates: Vec<_> = candidates.into_iter().map(|(_, target)| target).collect();
         let selected = if candidates.is_empty() { 0 } else { 1 };
         if !candidates.is_empty() {
             if let Some(original) = original {
@@ -1265,6 +1285,14 @@ impl AppState {
                 pane.seen = true;
                 changed = true;
             }
+        }
+        let remains_blocked = tab.panes.values().any(|pane| {
+            self.terminals
+                .get(&pane.attached_terminal_id)
+                .is_some_and(|terminal| terminal.state == AgentState::Blocked)
+        });
+        if changed && !remains_blocked {
+            tab.attention_since_seq = None;
         }
         changed
     }
@@ -3315,6 +3343,7 @@ impl AppState {
             }
         }
         let seen = self.apply_pane_state_change(ws_idx, pane_id, &change)?;
+        self.sync_tab_attention_queue(ws_idx, pane_id);
         let update = PaneStateUpdate {
             pane_id,
             ws_idx,
@@ -3380,6 +3409,21 @@ impl AppState {
         }
 
         Some(seen)
+    }
+
+    fn sync_tab_attention_queue(&mut self, ws_idx: usize, pane_id: PaneId) {
+        let Some(tab_idx) = self.workspaces[ws_idx].find_tab_index_for_pane(pane_id) else {
+            return;
+        };
+        let needs_attention =
+            tab_needs_attention(&self.workspaces[ws_idx].tabs[tab_idx], &self.terminals);
+        let tab = &mut self.workspaces[ws_idx].tabs[tab_idx];
+        if needs_attention {
+            tab.attention_since_seq
+                .get_or_insert(self.next_agent_state_change_seq);
+        } else {
+            tab.attention_since_seq = None;
+        }
     }
 
     fn record_or_deliver_agent_notification(
@@ -4671,6 +4715,8 @@ mod tests {
             .get_mut(&done_pane)
             .unwrap()
             .seen = false;
+        state.workspaces[0].tabs[blocked_tab].attention_since_seq = Some(2);
+        state.workspaces[1].tabs[0].attention_since_seq = Some(1);
 
         assert!(state.open_done_or_blocked_switcher());
         let switcher = state.recent_workspace.as_ref().unwrap();
@@ -4679,14 +4725,38 @@ mod tests {
         assert_eq!(candidates.len(), 3);
         assert_eq!(candidates[0].workspace_id, state.workspaces[0].id);
         assert_eq!(candidates[0].tab_number, state.workspaces[0].tabs[0].number);
-        assert_eq!(candidates[1].workspace_id, state.workspaces[0].id);
+        assert_eq!(candidates[1].workspace_id, state.workspaces[1].id);
+        assert_eq!(candidates[2].workspace_id, state.workspaces[0].id);
         assert_eq!(
-            candidates[1].tab_number,
+            candidates[2].tab_number,
             state.workspaces[0].tabs[blocked_tab].number
         );
-        assert_eq!(candidates[2].workspace_id, state.workspaces[1].id);
         assert_eq!(switcher.selected, 1);
         state.assert_invariants_for_test();
+    }
+
+    #[test]
+    fn done_or_blocked_queue_retains_age_until_tab_stops_needing_attention() {
+        let mut state = app_with_workspaces(&["active", "background"]);
+        state.ensure_test_terminals();
+        let pane = state.workspaces[1].tabs[0].root_pane;
+        set_agent_state(&mut state, 1, 0, pane, AgentState::Working);
+
+        transition_agent_state(&mut state, pane, AgentState::Blocked);
+        let first_sequence = state.workspaces[1].tabs[0].attention_since_seq;
+        assert!(first_sequence.is_some());
+
+        transition_agent_state(&mut state, pane, AgentState::Idle);
+        assert_eq!(
+            state.workspaces[1].tabs[0].attention_since_seq,
+            first_sequence
+        );
+
+        transition_agent_state(&mut state, pane, AgentState::Working);
+        assert_eq!(state.workspaces[1].tabs[0].attention_since_seq, None);
+
+        transition_agent_state(&mut state, pane, AgentState::Idle);
+        assert!(state.workspaces[1].tabs[0].attention_since_seq > first_sequence);
     }
 
     #[test]

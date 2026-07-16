@@ -703,6 +703,7 @@ fn restore_tab(
                 root_pane,
                 layout,
                 panes,
+                attention_since_seq: None,
                 #[cfg(test)]
                 runtimes: HashMap::new(),
                 zoomed: snap.zoomed,
