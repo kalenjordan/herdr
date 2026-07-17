@@ -3157,18 +3157,32 @@ impl AppState {
                 seq,
                 session_ref,
                 session_start_source,
-            } => self
-                .update_terminal_state(pane_id, |terminal| {
-                    terminal.set_agent_session_ref_for_session_start(
+            } => {
+                let reset_context_usage = source == "herdr:codex"
+                    && agent_label == "codex"
+                    && matches!(session_start_source.as_deref(), Some("startup" | "clear"));
+                let mut accepted = false;
+                let update = self.update_terminal_state(pane_id, |terminal| {
+                    let mutation = terminal.set_agent_session_ref_for_session_start(
                         source,
                         agent_label,
                         session_ref,
                         seq,
                         session_start_source,
-                    )
-                })
-                .into_iter()
-                .collect(),
+                    );
+                    accepted = mutation.is_some();
+                    mutation
+                });
+                if accepted
+                    && reset_context_usage
+                    && self.active.is_some_and(|ws_idx| {
+                        self.workspaces[ws_idx].focused_pane_id() == Some(pane_id)
+                    })
+                {
+                    self.context_used_percent = Some(0);
+                }
+                update.into_iter().collect()
+            }
             AppEvent::AgentContextReported {
                 pane_id,
                 source,
@@ -5554,6 +5568,59 @@ mod tests {
         });
 
         assert_eq!(state.context_used_percent, None);
+    }
+
+    #[test]
+    fn accepted_codex_new_session_resets_focused_context_usage() {
+        for start_source in ["startup", "clear"] {
+            let mut state = app_with_workspaces(&["active"]);
+            let pane_id = *state.workspaces[0].panes.keys().next().unwrap();
+            state.context_used_percent = Some(64);
+
+            state.handle_app_event(AppEvent::AgentSessionReported {
+                pane_id,
+                source: "herdr:codex".into(),
+                agent_label: "codex".into(),
+                seq: Some(10),
+                session_ref: Some(crate::agent_resume::AgentSessionRef {
+                    kind: crate::agent_resume::AgentSessionRefKind::Id,
+                    value: "fresh-session".into(),
+                }),
+                session_start_source: Some(start_source.into()),
+            });
+
+            assert_eq!(state.context_used_percent, Some(0), "{start_source}");
+        }
+    }
+
+    #[test]
+    fn rejected_codex_clear_session_does_not_reset_context_usage() {
+        let mut state = app_with_workspaces(&["active"]);
+        let pane_id = *state.workspaces[0].panes.keys().next().unwrap();
+        let session_ref = || crate::agent_resume::AgentSessionRef {
+            kind: crate::agent_resume::AgentSessionRefKind::Id,
+            value: "fresh-session".into(),
+        };
+        state.handle_app_event(AppEvent::AgentSessionReported {
+            pane_id,
+            source: "herdr:codex".into(),
+            agent_label: "codex".into(),
+            seq: Some(10),
+            session_ref: Some(session_ref()),
+            session_start_source: Some("clear".into()),
+        });
+        state.context_used_percent = Some(64);
+
+        state.handle_app_event(AppEvent::AgentSessionReported {
+            pane_id,
+            source: "herdr:codex".into(),
+            agent_label: "codex".into(),
+            seq: Some(9),
+            session_ref: Some(session_ref()),
+            session_start_source: Some("clear".into()),
+        });
+
+        assert_eq!(state.context_used_percent, Some(64));
     }
 
     #[test]
