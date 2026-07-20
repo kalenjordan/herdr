@@ -74,18 +74,49 @@ fn status_labels(
     labels
 }
 
+fn right_status_width(
+    ws: &crate::workspace::Workspace,
+    plugin_items: &[crate::plugin_status::PluginStatusItem],
+    area: Rect,
+) -> u16 {
+    status_labels(ws, plugin_items, None)
+        .iter()
+        .map(|label| display_width_u16(label).saturating_add(2))
+        .sum::<u16>()
+        .min(area.width)
+}
+
 fn status_rect(
     ws: &crate::workspace::Workspace,
     plugin_items: &[crate::plugin_status::PluginStatusItem],
-    context_used_percent: Option<u8>,
     area: Rect,
 ) -> Rect {
-    let tab_area = tab_content_rect_with_status(ws, plugin_items, context_used_percent, area);
+    let width = right_status_width(ws, plugin_items, area);
     Rect::new(
-        tab_area.x + tab_area.width,
+        area.x + area.width.saturating_sub(width),
         area.y,
-        area.width.saturating_sub(tab_area.width),
+        width,
         area.height,
+    )
+}
+
+fn context_usage_rect(app: &AppState, status_rect: Rect) -> Rect {
+    let Some(used) = app.context_used_percent else {
+        return Rect::default();
+    };
+    let tabs_end = if app.mouse_capture && app.view.new_tab_hit_area.width > 0 {
+        app.view.new_tab_hit_area.x + app.view.new_tab_hit_area.width
+    } else {
+        trailing_tab_controls_x(&app.view.tab_hit_areas, app.view.tab_bar_rect.x)
+    };
+    let right = status_rect.x;
+    Rect::new(
+        tabs_end.min(right),
+        app.view.tab_bar_rect.y,
+        display_width_u16(&context_usage_label(used))
+            .saturating_add(2)
+            .min(right.saturating_sub(tabs_end)),
+        1,
     )
 }
 
@@ -340,7 +371,7 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
         area,
     );
 
-    let status_rect = status_rect(ws, &app.plugin_status_items, app.context_used_percent, area);
+    let status_rect = status_rect(ws, &app.plugin_status_items, area);
     if status_rect.width > 0 {
         let mut spans = app
             .plugin_status_items
@@ -358,17 +389,22 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
                 Style::default().fg(p.overlay1).bg(p.panel_bg),
             ));
         }
-        if let Some(used) = app.context_used_percent {
-            let color = if used > 50 { p.peach } else { p.overlay1 };
-            spans.push(ratatui::text::Span::styled(
-                format!(" {} ", context_usage_label(used)),
-                Style::default().fg(color).bg(p.panel_bg),
-            ));
-        }
         frame.render_widget(
             Paragraph::new(ratatui::text::Line::from(spans)).right_aligned(),
             status_rect,
         );
+    }
+
+    if let Some(used) = app.context_used_percent {
+        let rect = context_usage_rect(app, status_rect);
+        if rect.width > 0 {
+            let color = if used > 50 { p.peach } else { p.overlay1 };
+            frame.render_widget(
+                Paragraph::new(format!(" {} ", context_usage_label(used)))
+                    .style(Style::default().fg(color).bg(p.panel_bg)),
+                rect,
+            );
+        }
     }
 
     let first_visible_idx = app
@@ -605,6 +641,14 @@ mod tests {
         app.workspaces = vec![Workspace::test_new("test")];
         app.context_used_percent = Some(31);
         app.view.tab_bar_rect = Rect::new(0, 0, 40, 1);
+        let tab_area = tab_content_rect_with_status(
+            &app.workspaces[0],
+            &app.plugin_status_items,
+            app.context_used_percent,
+            app.view.tab_bar_rect,
+        );
+        let view = compute_tab_bar_view(&app.workspaces[0], tab_area, 0, true, false);
+        app.view.tab_hit_areas = view.tab_hit_areas;
 
         let backend = TestBackend::new(40, 1);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -612,7 +656,54 @@ mod tests {
             .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
             .unwrap();
         let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
-        assert!(row.ends_with(" 31%"), "tab row: {row:?}");
+        assert!(row.starts_with(" 1       31%"), "tab row: {row:?}");
+    }
+
+    #[test]
+    fn context_usage_follows_mouse_tab_controls() {
+        let mut app = AppState::test_new();
+        let mut ws = Workspace::test_new("test");
+        for idx in 2..=6 {
+            ws.test_add_tab(Some(&format!("tab-{idx}")));
+        }
+        app.active = Some(0);
+        app.workspaces = vec![ws];
+        app.context_used_percent = Some(72);
+        app.mouse_capture = true;
+        app.view.tab_bar_rect = Rect::new(0, 0, 30, 1);
+        let tab_area = tab_content_rect_with_status(
+            &app.workspaces[0],
+            &app.plugin_status_items,
+            app.context_used_percent,
+            app.view.tab_bar_rect,
+        );
+        let view = compute_tab_bar_view(&app.workspaces[0], tab_area, 0, true, true);
+        app.view.tab_hit_areas = view.tab_hit_areas;
+        app.view.tab_scroll_left_hit_area = view.scroll_left_hit_area;
+        app.view.tab_scroll_right_hit_area = view.scroll_right_hit_area;
+        app.view.new_tab_hit_area = view.new_tab_hit_area;
+
+        let context_rect = context_usage_rect(
+            &app,
+            status_rect(
+                &app.workspaces[0],
+                &app.plugin_status_items,
+                app.view.tab_bar_rect,
+            ),
+        );
+        assert_eq!(
+            context_rect.x,
+            app.view.new_tab_hit_area.x + app.view.new_tab_hit_area.width
+        );
+        assert_eq!(context_rect.width, 5);
+
+        let backend = TestBackend::new(30, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
+            .unwrap();
+        let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
+        assert!(row.contains(" +  72%"), "tab row: {row:?}");
     }
 
     #[test]
