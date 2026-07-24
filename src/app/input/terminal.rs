@@ -13,8 +13,16 @@ struct PreparedPaneInput {
     bytes: Bytes,
 }
 
+const PAGE_SCROLL_OVERLAP_LINES: usize = 6;
+
 fn is_modifier_only_key(code: &KeyCode) -> bool {
     matches!(code, KeyCode::Modifier(_))
+}
+
+fn pane_page_scroll_lines(height: u16) -> usize {
+    usize::from(height)
+        .saturating_sub(PAGE_SCROLL_OVERLAP_LINES)
+        .max(1)
 }
 
 impl App {
@@ -125,7 +133,7 @@ impl App {
                         let lines = self
                             .state
                             .pane_info_by_id(pane_id)
-                            .map(|info| info.inner_rect.height as usize)
+                            .map(|info| pane_page_scroll_lines(info.inner_rect.height))
                             .unwrap_or(10)
                             .max(1);
                         if key_event.code == KeyCode::PageUp {
@@ -1249,8 +1257,15 @@ mod tests {
             .expect("scroll metrics after PageUp");
         assert_eq!(
             end_metrics.offset_from_bottom,
-            info.inner_rect.height as usize
+            pane_page_scroll_lines(info.inner_rect.height)
         );
+    }
+
+    #[test]
+    fn page_scroll_preserves_six_lines_of_overlap() {
+        assert_eq!(pane_page_scroll_lines(18), 12);
+        assert_eq!(pane_page_scroll_lines(6), 1);
+        assert_eq!(pane_page_scroll_lines(1), 1);
     }
 
     #[tokio::test]
@@ -1327,7 +1342,7 @@ mod tests {
             .expect("scroll metrics after PageUp press");
         assert_eq!(
             after_press.offset_from_bottom,
-            info.inner_rect.height as usize
+            pane_page_scroll_lines(info.inner_rect.height)
         );
 
         app.handle_terminal_key_headless(
