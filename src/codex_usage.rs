@@ -87,6 +87,9 @@ fn read_latest_context_used(path: &Path) -> Option<u8> {
     file.read_to_string(&mut tail).ok()?;
     tail.lines().rev().find_map(|line| {
         let record = serde_json::from_str::<TranscriptRecord>(line).ok()?;
+        if record.record_type == "event_msg" && record.payload.payload_type == "context_compacted" {
+            return Some(None);
+        }
         if record.record_type != "event_msg" || record.payload.payload_type != "token_count" {
             return None;
         }
@@ -100,8 +103,8 @@ fn read_latest_context_used(path: &Path) -> Option<u8> {
         let remaining = effective_window.saturating_sub(effective_used);
         let remaining_percent =
             (remaining.saturating_mul(100) + effective_window / 2) / effective_window;
-        Some(100u8.saturating_sub(remaining_percent.min(100) as u8))
-    })
+        Some(Some(100u8.saturating_sub(remaining_percent.min(100) as u8)))
+    })?
 }
 
 fn valid_session_id(value: &str) -> bool {
@@ -148,6 +151,32 @@ mod tests {
         )
         .unwrap();
         assert_eq!(read_latest_context_used(&path), Some(33));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn hides_usage_after_compaction_until_a_fresh_token_count() {
+        let path =
+            std::env::temp_dir().join(format!("codex-usage-compact-{}.jsonl", std::process::id()));
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"last_token_usage\":{\"total_tokens\":89684},\"model_context_window\":258400}}}\n",
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"context_compacted\"}}\n"
+            ),
+        )
+        .unwrap();
+        assert_eq!(read_latest_context_used(&path), None);
+
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"context_compacted\"}}\n",
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"last_token_usage\":{\"total_tokens\":42000},\"model_context_window\":258400}}}\n"
+            ),
+        )
+        .unwrap();
+        assert!(read_latest_context_used(&path).is_some());
         let _ = std::fs::remove_file(path);
     }
 }

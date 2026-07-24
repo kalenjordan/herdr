@@ -3160,7 +3160,10 @@ impl AppState {
             } => {
                 let reset_context_usage = source == "herdr:codex"
                     && agent_label == "codex"
-                    && matches!(session_start_source.as_deref(), Some("startup" | "clear"));
+                    && matches!(
+                        session_start_source.as_deref(),
+                        Some("startup" | "clear" | "compact")
+                    );
                 let mut accepted = false;
                 let update = self.update_terminal_state(pane_id, |terminal| {
                     let mutation = terminal.set_agent_session_ref_for_session_start(
@@ -3179,7 +3182,7 @@ impl AppState {
                         self.workspaces[ws_idx].focused_pane_id() == Some(pane_id)
                     })
                 {
-                    self.context_used_percent = Some(0);
+                    self.context_used_percent = None;
                 }
                 update.into_iter().collect()
             }
@@ -5571,8 +5574,8 @@ mod tests {
     }
 
     #[test]
-    fn accepted_codex_new_session_resets_focused_context_usage() {
-        for start_source in ["startup", "clear"] {
+    fn accepted_codex_new_session_hides_focused_context_usage() {
+        for start_source in ["startup", "clear", "compact"] {
             let mut state = app_with_workspaces(&["active"]);
             let pane_id = *state.workspaces[0].panes.keys().next().unwrap();
             state.context_used_percent = Some(64);
@@ -5589,7 +5592,7 @@ mod tests {
                 session_start_source: Some(start_source.into()),
             });
 
-            assert_eq!(state.context_used_percent, Some(0), "{start_source}");
+            assert_eq!(state.context_used_percent, None, "{start_source}");
         }
     }
 
