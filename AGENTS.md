@@ -153,8 +153,12 @@ When Kalen asks to see a newly implemented Herdr code change, or says a local
 change is not taking effect, handle the deployment directly. Do not suggest
 running a separate debug Herdr instance. Validate the relevant change, build
 the release binary with the repository-required Zig version, install that
-exact binary to `~/.local/bin/herdr`, and use a release-binary live handoff when
-the running server must be updated. Verify the server log contains
+exact binary to `~/.local/bin/herdr`, and verify the installed file matches the
+built release binary before updating production. The installed path is the
+single source of truth for production: always pass `~/.local/bin/herdr` to
+`herdr server live-handoff --import-exe`, never `target/release/herdr` or
+another build output. This keeps later cold starts and client launches on the
+same version as the live server. Verify the server log contains
 `handoff import ready panes=N` before reporting success. If the change also
 requires restarting or re-executing the TUI client, handle that through the
 supported production flow when possible and state clearly what remains.
