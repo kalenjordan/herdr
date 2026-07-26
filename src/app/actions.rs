@@ -56,10 +56,10 @@ pub fn is_completion_transition_parts(
 }
 
 pub fn active_tab_suppresses_notifications(
-    is_active_tab: bool,
-    outer_terminal_focus: Option<bool>,
+    _is_active_tab: bool,
+    _outer_terminal_focus: Option<bool>,
 ) -> bool {
-    is_active_tab && outer_terminal_focus != Some(false)
+    false
 }
 
 #[cfg(test)]
@@ -3407,8 +3407,6 @@ impl AppState {
         change: &EffectiveStateChange,
     ) -> Option<bool> {
         let is_active_tab = self.pane_is_in_active_tab(ws_idx, pane_id);
-        let suppress_active_tab_notifications =
-            active_tab_suppresses_notifications(is_active_tab, self.outer_terminal_focus);
         let pane = self.workspaces[ws_idx]
             .tabs
             .iter_mut()
@@ -3417,7 +3415,7 @@ impl AppState {
         if change.state != AgentState::Idle {
             pane.seen = true;
         } else if is_completion_transition(change) {
-            pane.seen = suppress_active_tab_notifications;
+            pane.seen = is_active_tab && self.outer_terminal_focus != Some(false);
         }
         let seen = pane.seen;
 
@@ -5449,7 +5447,7 @@ mod tests {
     }
 
     #[test]
-    fn delayed_background_waiting_is_suppressed_if_pane_becomes_active() {
+    fn delayed_background_waiting_still_notifies_if_pane_becomes_active() {
         let mut state = app_with_workspaces(&["active", "background"]);
         state.active = Some(0);
         state.toast_config.delivery = crate::config::ToastDelivery::Herdr;
@@ -5468,7 +5466,9 @@ mod tests {
         let deadline = state.next_pending_agent_notification_deadline().unwrap();
         state.active = Some(1);
 
-        assert!(state.drain_due_agent_notifications(deadline).is_empty());
+        let deliveries = state.drain_due_agent_notifications(deadline);
+        assert_eq!(deliveries.len(), 1);
+        assert!(deliveries[0].client_notification.is_some());
         assert!(state.toast.is_none());
     }
 
@@ -6009,9 +6009,9 @@ mod tests {
     }
 
     #[test]
-    fn active_tab_suppression_preserves_unknown_focus_behavior() {
-        assert!(active_tab_suppresses_notifications(true, None));
-        assert!(active_tab_suppresses_notifications(true, Some(true)));
+    fn active_tab_never_suppresses_notifications() {
+        assert!(!active_tab_suppresses_notifications(true, None));
+        assert!(!active_tab_suppresses_notifications(true, Some(true)));
         assert!(!active_tab_suppresses_notifications(true, Some(false)));
         assert!(!active_tab_suppresses_notifications(false, None));
     }

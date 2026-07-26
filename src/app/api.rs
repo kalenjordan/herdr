@@ -14,8 +14,8 @@ mod workspaces;
 mod worktrees;
 
 use super::{
-    api_helpers::pane_agent_status, App, Mode, OverlayPaneState, ToastKind,
-    CONTEXT_USAGE_REFRESH_INTERVAL,
+    api_helpers::{pane_agent_event_status, pane_agent_status},
+    App, Mode, OverlayPaneState, ToastKind, CONTEXT_USAGE_REFRESH_INTERVAL,
 };
 use crate::events::AppEvent;
 
@@ -582,8 +582,24 @@ impl App {
             .workspaces
             .get(update.ws_idx)
             .and_then(|ws| ws.pane_state(update.pane_id))
-            .map(|pane| pane_agent_status(update.state, pane.seen))
-            .unwrap_or_else(|| pane_agent_status(update.state, update.seen));
+            .map(|pane| {
+                pane_agent_event_status(
+                    update.previous_state,
+                    update.state,
+                    update.previous_agent_label.as_deref(),
+                    update.agent_label.as_deref(),
+                    pane.seen,
+                )
+            })
+            .unwrap_or_else(|| {
+                pane_agent_event_status(
+                    update.previous_state,
+                    update.state,
+                    update.previous_agent_label.as_deref(),
+                    update.agent_label.as_deref(),
+                    update.seen,
+                )
+            });
 
         if previous_agent_status != agent_status
             || update.previous_presentation != update.presentation

@@ -72,6 +72,25 @@ pub(super) fn pane_agent_status(
     }
 }
 
+pub(super) fn pane_agent_event_status(
+    previous_state: crate::detect::AgentState,
+    state: crate::detect::AgentState,
+    previous_agent_label: Option<&str>,
+    agent_label: Option<&str>,
+    seen: bool,
+) -> crate::api::schema::AgentStatus {
+    if crate::app::actions::is_completion_transition_parts(
+        previous_state,
+        state,
+        previous_agent_label,
+        agent_label,
+    ) {
+        crate::api::schema::AgentStatus::Done
+    } else {
+        pane_agent_status(state, seen)
+    }
+}
+
 pub(super) fn normalize_reported_agent_label(agent: &str) -> Option<String> {
     let trimmed = agent.trim();
     if trimmed.is_empty() {
@@ -90,4 +109,23 @@ pub(super) fn normalize_custom_status(status: Option<String>) -> Option<String> 
         normalized.push(ch);
     }
     (!normalized.trim().is_empty()).then(|| normalized.trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn focused_seen_completion_event_reports_done() {
+        assert_eq!(
+            pane_agent_event_status(
+                crate::detect::AgentState::Working,
+                crate::detect::AgentState::Idle,
+                Some("codex"),
+                Some("codex"),
+                true,
+            ),
+            crate::api::schema::AgentStatus::Done
+        );
+    }
 }
