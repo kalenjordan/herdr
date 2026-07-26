@@ -26,6 +26,92 @@ fn pane_page_scroll_lines(height: u16) -> usize {
 }
 
 impl App {
+    fn observe_pending_pane_key(
+        &mut self,
+        ws_idx: usize,
+        pane_id: crate::layout::PaneId,
+        key: crossterm::event::KeyEvent,
+    ) {
+        use crossterm::event::{KeyEventKind, KeyModifiers};
+
+        if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+            return;
+        }
+
+        let command = match key.code {
+            KeyCode::Char(ch)
+                if !key.modifiers.intersects(
+                    KeyModifiers::CONTROL
+                        | KeyModifiers::ALT
+                        | KeyModifiers::SUPER
+                        | KeyModifiers::HYPER
+                        | KeyModifiers::META,
+                ) =>
+            {
+                let input = self.pending_pane_input.entry(pane_id).or_default();
+                if input.len() < 64 {
+                    input.push(ch);
+                }
+                return;
+            }
+            KeyCode::Backspace => {
+                self.pending_pane_input.entry(pane_id).or_default().pop();
+                return;
+            }
+            KeyCode::Enter => {
+                let input = self.pending_pane_input.remove(&pane_id).unwrap_or_default();
+                if key.modifiers.is_empty() {
+                    input
+                } else {
+                    return;
+                }
+            }
+            KeyCode::Esc => {
+                self.pending_pane_input.remove(&pane_id);
+                return;
+            }
+            KeyCode::Char('c' | 'u') if key.modifiers == KeyModifiers::CONTROL => {
+                self.pending_pane_input.remove(&pane_id);
+                return;
+            }
+            _ => return,
+        };
+
+        if command != "/clear" {
+            return;
+        }
+        let Some(terminal_id) = self.state.terminal_id_for_pane(ws_idx, pane_id) else {
+            return;
+        };
+        let Some(session_id) = self
+            .state
+            .terminals
+            .get(&terminal_id)
+            .and_then(|terminal| terminal.codex_session_id())
+            .map(str::to_owned)
+        else {
+            return;
+        };
+        self.state
+            .suppressed_codex_context_sessions
+            .insert(terminal_id, session_id);
+        self.state.context_used_percent = None;
+    }
+
+    pub(crate) fn observe_pending_pane_paste(
+        &mut self,
+        pane_id: crate::layout::PaneId,
+        text: &str,
+    ) {
+        let input = self.pending_pane_input.entry(pane_id).or_default();
+        if input.len().saturating_add(text.len()) <= 64 {
+            input.push_str(text);
+        } else {
+            input.clear();
+            input.push('\0');
+        }
+    }
+
     pub(crate) fn handle_terminal_key_headless(&mut self, key: TerminalKey) {
         let Some(input) = self.prepare_terminal_key_forward(key) else {
             return;
@@ -105,6 +191,7 @@ impl App {
         let ws_idx = self.state.active?;
         let ws = self.state.workspaces.get(ws_idx)?;
         let pane_id = ws.focused_pane_id()?;
+        self.observe_pending_pane_key(ws_idx, pane_id, key_event);
         let rt =
             self.state
                 .runtime_for_pane_in_workspace(&self.terminal_runtimes, ws_idx, pane_id)?;
@@ -241,7 +328,128 @@ mod tests {
         app.state.selected = 0;
         app.state.mode = Mode::Terminal;
         app.state.view.pane_infos = pane_infos;
+        app.state.ensure_test_terminals();
         (app, info)
+    }
+
+    fn set_focused_codex_session(app: &mut App, session_id: &str) -> crate::terminal::TerminalId {
+        let ws_idx = app.state.active.unwrap();
+        let pane_id = app.state.workspaces[ws_idx].focused_pane_id().unwrap();
+        let terminal_id = app.state.terminal_id_for_pane(ws_idx, pane_id).unwrap();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_persisted_agent_session(crate::agent_resume::PersistedAgentSession {
+                source: "herdr:codex".into(),
+                agent: "codex".into(),
+                session_ref: crate::agent_resume::AgentSessionRef::id(session_id).unwrap(),
+            });
+        terminal_id
+    }
+
+    fn type_terminal_text(app: &mut App, text: &str) {
+        for ch in text.chars() {
+            app.handle_terminal_key_headless(TerminalKey::new(
+                KeyCode::Char(ch),
+                KeyModifiers::empty(),
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn submitting_codex_clear_suppresses_old_session_context() {
+        let (mut app, _) = app_with_screen_bytes(b"");
+        let terminal_id = set_focused_codex_session(&mut app, "old-session");
+        app.state.context_used_percent = Some(64);
+
+        type_terminal_text(&mut app, "/clear");
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::Enter, KeyModifiers::empty()));
+
+        assert_eq!(app.state.context_used_percent, None);
+        assert_eq!(
+            app.state
+                .suppressed_codex_context_sessions
+                .get(&terminal_id)
+                .map(String::as_str),
+            Some("old-session")
+        );
+    }
+
+    #[tokio::test]
+    async fn similar_codex_input_does_not_suppress_context() {
+        let (mut app, _) = app_with_screen_bytes(b"");
+        let terminal_id = set_focused_codex_session(&mut app, "old-session");
+        app.state.context_used_percent = Some(64);
+
+        type_terminal_text(&mut app, "/clearance");
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::Enter, KeyModifiers::empty()));
+
+        assert_eq!(app.state.context_used_percent, Some(64));
+        assert!(!app
+            .state
+            .suppressed_codex_context_sessions
+            .contains_key(&terminal_id));
+    }
+
+    #[tokio::test]
+    async fn edited_codex_clear_command_is_recognized() {
+        let (mut app, _) = app_with_screen_bytes(b"");
+        let terminal_id = set_focused_codex_session(&mut app, "old-session");
+        app.state.context_used_percent = Some(64);
+
+        type_terminal_text(&mut app, "/clearx");
+        app.handle_terminal_key_headless(TerminalKey::new(
+            KeyCode::Backspace,
+            KeyModifiers::empty(),
+        ));
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::Enter, KeyModifiers::empty()));
+
+        assert_eq!(
+            app.state
+                .suppressed_codex_context_sessions
+                .get(&terminal_id)
+                .map(String::as_str),
+            Some("old-session")
+        );
+    }
+
+    #[tokio::test]
+    async fn pasted_codex_clear_command_is_recognized() {
+        let (mut app, _) = app_with_screen_bytes(b"");
+        let ws_idx = app.state.active.unwrap();
+        let pane_id = app.state.workspaces[ws_idx].focused_pane_id().unwrap();
+        let terminal_id = set_focused_codex_session(&mut app, "old-session");
+        app.state.context_used_percent = Some(64);
+
+        app.observe_pending_pane_paste(pane_id, "/clear");
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::Enter, KeyModifiers::empty()));
+
+        assert_eq!(
+            app.state
+                .suppressed_codex_context_sessions
+                .get(&terminal_id)
+                .map(String::as_str),
+            Some("old-session")
+        );
+    }
+
+    #[tokio::test]
+    async fn multiline_text_resembling_clear_does_not_suppress_context() {
+        let (mut app, _) = app_with_screen_bytes(b"");
+        let terminal_id = set_focused_codex_session(&mut app, "old-session");
+        app.state.context_used_percent = Some(64);
+
+        type_terminal_text(&mut app, "/cle");
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::Enter, KeyModifiers::SHIFT));
+        type_terminal_text(&mut app, "ar");
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::Enter, KeyModifiers::empty()));
+
+        assert_eq!(app.state.context_used_percent, Some(64));
+        assert!(!app
+            .state
+            .suppressed_codex_context_sessions
+            .contains_key(&terminal_id));
     }
 
     fn double_click(app: &mut App, col: u16, row: u16) {

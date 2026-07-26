@@ -137,6 +137,9 @@ pub struct App {
     pub(crate) last_render_at: Option<Instant>,
     pub(crate) suppressed_repeat_keys:
         HashSet<(crossterm::event::KeyCode, crossterm::event::KeyModifiers)>,
+    /// Composer text observed for each pane, used only to recognize exact local
+    /// agent commands whose lifecycle event can arrive after the UI resets.
+    pub(crate) pending_pane_input: HashMap<crate::layout::PaneId, String>,
     pub render_notify: Arc<Notify>,
     pub render_dirty: Arc<AtomicBool>,
     pub(crate) full_redraw_pending: bool,
@@ -653,6 +656,7 @@ impl App {
             installed_plugins: load_plugin_registry(no_session),
             plugin_status_items: Vec::new(),
             context_used_percent: None,
+            suppressed_codex_context_sessions: HashMap::new(),
             plugin_panes: std::collections::HashMap::new(),
             plugin_command_logs: Vec::new(),
             next_plugin_command_log_id: 1,
@@ -736,6 +740,7 @@ impl App {
             persist_pane_history: config.experimental.pane_history,
             last_render_at: None,
             suppressed_repeat_keys: HashSet::new(),
+            pending_pane_input: HashMap::new(),
             api_rx,
             event_hub,
             last_focus,
@@ -1613,27 +1618,28 @@ impl App {
                     if self.state.mode != Mode::Terminal {
                         self.paste_into_active_text_input(&text);
                     } else {
-                        if let Some(ws_idx) = self.state.active {
-                            if let Some(ws) = self.state.workspaces.get(ws_idx) {
-                                if let Some(focused) = ws.focused_pane_id() {
-                                    if let Some(runtime) = self.state.runtime_for_pane_in_workspace(
-                                        &self.terminal_runtimes,
-                                        ws_idx,
-                                        focused,
-                                    ) {
-                                        let _ = runtime.try_send_bytes(bytes::Bytes::from(
-                                            if runtime
-                                                .input_state()
-                                                .map(|s| s.bracketed_paste)
-                                                .unwrap_or(false)
-                                            {
-                                                format!("\x1b[200~{text}\x1b[201~")
-                                            } else {
-                                                text
-                                            },
-                                        ));
-                                    }
-                                }
+                        if let Some((ws_idx, focused)) = self.state.active.and_then(|ws_idx| {
+                            self.state.workspaces.get(ws_idx).and_then(|ws| {
+                                ws.focused_pane_id().map(|pane_id| (ws_idx, pane_id))
+                            })
+                        }) {
+                            self.observe_pending_pane_paste(focused, &text);
+                            if let Some(runtime) = self.state.runtime_for_pane_in_workspace(
+                                &self.terminal_runtimes,
+                                ws_idx,
+                                focused,
+                            ) {
+                                let _ = runtime.try_send_bytes(bytes::Bytes::from(
+                                    if runtime
+                                        .input_state()
+                                        .map(|s| s.bracketed_paste)
+                                        .unwrap_or(false)
+                                    {
+                                        format!("\x1b[200~{text}\x1b[201~")
+                                    } else {
+                                        text
+                                    },
+                                ));
                             }
                         }
                     }

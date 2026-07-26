@@ -537,6 +537,15 @@ impl App {
     }
 
     pub(crate) fn refresh_context_usage(&mut self) -> bool {
+        let terminals = &self.state.terminals;
+        self.state
+            .suppressed_codex_context_sessions
+            .retain(|terminal_id, suppressed_session| {
+                terminals
+                    .get(terminal_id)
+                    .and_then(|terminal| terminal.codex_session_id())
+                    .is_some_and(|current_session| current_session == suppressed_session)
+            });
         let terminal = self
             .state
             .active
@@ -545,9 +554,23 @@ impl App {
                 let pane_id = ws.focused_pane_id()?;
                 ws.active_tab()?.panes.get(&pane_id)
             })
-            .and_then(|pane| self.state.terminals.get(&pane.attached_terminal_id));
-        let used = terminal.and_then(|terminal| {
+            .map(|pane| pane.attached_terminal_id.clone())
+            .and_then(|terminal_id| {
+                self.state
+                    .terminals
+                    .get(&terminal_id)
+                    .map(|terminal| (terminal_id, terminal))
+            });
+        let used = terminal.and_then(|(terminal_id, terminal)| {
             if let Some(session_id) = terminal.codex_session_id() {
+                if self
+                    .state
+                    .suppressed_codex_context_sessions
+                    .get(&terminal_id)
+                    .is_some_and(|suppressed| suppressed == session_id)
+                {
+                    return None;
+                }
                 crate::codex_usage::load_context_used_percent(session_id)
             } else {
                 terminal.claude_context_used_percent()

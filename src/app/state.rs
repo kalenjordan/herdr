@@ -1494,6 +1494,10 @@ pub struct AppState {
     pub(crate) plugin_status_items: Vec<crate::plugin_status::PluginStatusItem>,
     /// Context used by the Codex or Claude session in the focused pane, if published by its hook.
     pub(crate) context_used_percent: Option<u8>,
+    /// Codex session ids whose transcript usage is stale after a locally submitted `/clear`.
+    /// The entry is keyed by terminal so it follows pane moves without becoming pane identity.
+    pub(crate) suppressed_codex_context_sessions:
+        std::collections::HashMap<crate::terminal::TerminalId, String>,
     /// Pane ids opened through the plugin pane API.
     pub(crate) plugin_panes: std::collections::HashMap<PaneId, PluginPaneRecord>,
     /// Recent plugin action/event command executions.
@@ -1850,6 +1854,7 @@ impl AppState {
             installed_plugins: std::collections::HashMap::new(),
             plugin_status_items: Vec::new(),
             context_used_percent: None,
+            suppressed_codex_context_sessions: std::collections::HashMap::new(),
             plugin_panes: std::collections::HashMap::new(),
             plugin_command_logs: Vec::new(),
             next_plugin_command_log_id: 1,
