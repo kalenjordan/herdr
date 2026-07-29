@@ -1008,6 +1008,13 @@ pub fn process_exists(pid: u32) -> bool {
     }
 }
 
+pub(crate) fn replace_file(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+) -> std::io::Result<()> {
+    std::fs::rename(source, destination)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -101,6 +101,22 @@ herdr notification show <title> [--body TEXT] [--position top-left|top-right|bot
 
 `notification show` uses the configured `[ui.toast]` delivery. `--position` only affects in-app Herdr toasts. `--sound` defaults to `none`; `done` and `request` play the existing finished and needs-attention sounds only when the notification is shown.
 
+## Secrets
+
+```bash
+herdr secret request <VARIABLE_NAME> [--file .env] [--label TEXT]
+```
+
+`secret request` must run inside a Herdr pane. It opens a masked prompt in the
+foreground Herdr client, then adds or replaces the variable in the pane
+workspace's `.env` file. The value does not pass through the pane, command
+arguments, terminal output, or API response. `--file` accepts relative `.env`
+or `.env.*` paths only. The requesting command waits until the prompt is saved
+or cancelled.
+
+The resulting file remains readable by processes with access to the workspace,
+including an agent running as the same operating-system user.
+
 ## Sessions
 
 ```bash

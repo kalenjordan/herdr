@@ -65,6 +65,28 @@ pub struct NotificationShowParams {
     pub sound: NotificationShowSound,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SecretRequestParams {
+    pub name: String,
+    pub pane_id: String,
+    #[serde(default = "default_secret_env_file")]
+    pub file: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+fn default_secret_env_file() -> String {
+    ".env".to_string()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretRequestOutcome {
+    Added,
+    Replaced,
+    Cancelled,
+}
+
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Default,
 )]

@@ -15,7 +15,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ModalAction {
+pub(crate) enum ModalAction {
     Continue,
     Save,
     Clear,
@@ -358,7 +358,7 @@ pub(super) fn open_new_tab_dialog(state: &mut AppState) {
     state.mode = Mode::RenameTab;
 }
 
-pub(super) fn leave_modal(state: &mut AppState) {
+pub(crate) fn leave_modal(state: &mut AppState) {
     if state.active.is_some() {
         state.mode = Mode::Terminal;
     } else {

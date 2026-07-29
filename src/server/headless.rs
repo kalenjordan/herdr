@@ -2886,6 +2886,24 @@ impl HeadlessServer {
         };
 
         self.sync_foreground_client_state();
+        if let api::schema::Method::SecretRequest(params) = msg.request.method {
+            if self.foreground_client_id.is_none() {
+                let response = serde_json::to_string(&api::schema::ErrorResponse {
+                    id: msg.request.id,
+                    error: api::schema::ErrorBody {
+                        code: "no_foreground_client".into(),
+                        message: "secret entry requires a foreground Herdr client".into(),
+                    },
+                })
+                .unwrap_or_else(|_| "{}".to_string());
+                let _ = msg.respond_to.send(response);
+                return false;
+            }
+            return changed
+                | self
+                    .app
+                    .handle_deferred_secret_request(msg.request.id, params, msg.respond_to);
+        }
         if matches!(
             &msg.request.method,
             api::schema::Method::WorktreeCreate(_) | api::schema::Method::WorktreeRemove(_)

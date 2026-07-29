@@ -34,6 +34,7 @@ pub(super) fn command() -> Command {
         .subcommand(worktree_command())
         .subcommand(tab_command())
         .subcommand(notification_command())
+        .subcommand(secret_command())
         .subcommand(agent_command())
         .subcommand(pane_command())
         .subcommand(wait_command())
@@ -250,6 +251,18 @@ fn notification_command() -> Command {
                     "bottom-right",
                 ]))
                 .arg(option("sound", "SOUND").value_parser(["none", "done", "request"])),
+        )
+}
+
+fn secret_command() -> Command {
+    Command::new("secret")
+        .about("Request masked secret entry")
+        .subcommand(
+            Command::new("request")
+                .about("Open a masked prompt and update a workspace .env file")
+                .arg(Arg::new("name").value_name("VARIABLE_NAME").required(true))
+                .arg(option("file", "PATH").help("Relative .env or .env.* file path"))
+                .arg(option("label", "TEXT").help("Human-readable prompt label")),
         )
 }
 

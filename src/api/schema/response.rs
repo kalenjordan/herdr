@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::agents::AgentInfo;
-use super::common::{ClientWindowTitleReason, NotificationShowReason};
+use super::common::{ClientWindowTitleReason, NotificationShowReason, SecretRequestOutcome};
 use super::events::EventEnvelope;
 use super::integrations::{
     IntegrationInstallResult, IntegrationTarget, IntegrationUninstallResult,
@@ -168,6 +168,11 @@ pub enum ResponseResult {
     NotificationShow {
         shown: bool,
         reason: NotificationShowReason,
+    },
+    SecretRequest {
+        outcome: SecretRequestOutcome,
+        name: String,
+        file: String,
     },
     ClientWindowTitle {
         changed: bool,

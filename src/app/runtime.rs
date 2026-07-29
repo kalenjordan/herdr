@@ -84,6 +84,13 @@ impl App {
             self.sync_modifier_key_reporting(previous_mode);
             return changed | deferred_changed;
         }
+        if let crate::api::schema::Method::SecretRequest(params) = msg.request.method {
+            let secret_changed =
+                self.handle_deferred_secret_request(msg.request.id, params, msg.respond_to);
+            self.sync_prefix_input_source(previous_mode);
+            self.sync_modifier_key_reporting(previous_mode);
+            return changed | secret_changed;
+        }
         let response = self.handle_api_request(msg.request);
         if !skip_default_workspace {
             changed |= self.ensure_default_workspace();

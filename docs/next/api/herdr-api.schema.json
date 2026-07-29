@@ -3079,6 +3079,31 @@
           ],
           "type": "string"
         },
+        "SecretRequestParams": {
+          "properties": {
+            "file": {
+              "default": ".env",
+              "type": "string"
+            },
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "pane_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "pane_id"
+          ],
+          "type": "object"
+        },
         "ServerLiveHandoffParams": {
           "properties": {
             "expected_protocol": {
@@ -3861,6 +3886,22 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/NotificationShowParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "secret.request",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/SecretRequestParams"
             }
           },
           "required": [
@@ -8296,6 +8337,30 @@
             },
             {
               "properties": {
+                "file": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "outcome": {
+                  "$ref": "#/schemas/success_response/$defs/SecretRequestOutcome"
+                },
+                "type": {
+                  "const": "secret_request",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "outcome",
+                "name",
+                "file"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
                 "changed": {
                   "type": "boolean"
                 },
@@ -8639,6 +8704,14 @@
               "type": "object"
             }
           ]
+        },
+        "SecretRequestOutcome": {
+          "enum": [
+            "added",
+            "replaced",
+            "cancelled"
+          ],
+          "type": "string"
         },
         "ServerCapabilities": {
           "properties": {

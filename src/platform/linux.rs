@@ -685,6 +685,13 @@ fn process_session_id(pid: u32) -> Option<i32> {
     fields.get(3)?.parse().ok()
 }
 
+pub(crate) fn replace_file(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+) -> std::io::Result<()> {
+    std::fs::rename(source, destination)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

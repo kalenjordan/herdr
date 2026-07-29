@@ -123,6 +123,21 @@ pub enum RawInputEvent {
     Unsupported,
 }
 
+impl RawInputEvent {
+    fn log_kind(&self) -> &'static str {
+        match self {
+            Self::Key(_) => "key",
+            Self::Paste(_) => "paste",
+            Self::Mouse(_) => "mouse",
+            Self::OuterFocusGained => "outer_focus_gained",
+            Self::OuterFocusLost => "outer_focus_lost",
+            Self::HostDefaultColor { .. } => "host_default_color",
+            Self::HostColorSchemeChanged(_) => "host_color_scheme_changed",
+            Self::Unsupported => "unsupported",
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct RawInputFramer {
     byte_framer: RawInputByteFramer,
@@ -165,7 +180,11 @@ impl RawInputFramer {
                     )));
                 }
                 extract_one_event(&chunk).map(|(event, _consumed)| {
-                    tracing::debug!(raw_bytes = ?chunk, event = ?event, "raw input event parsed");
+                    tracing::debug!(
+                        byte_count = chunk.len(),
+                        event_kind = event.log_kind(),
+                        "raw input event parsed"
+                    );
                     event
                 })
             })
@@ -308,7 +327,7 @@ impl RawInputByteFramer {
             self.host_color_replies_awaited = 0;
             self.held_pending_color_esc = false;
             tracing::warn!(
-                bytes = ?self.buffer,
+                byte_count = self.buffer.len(),
                 "flushing lone escape after input timeout; if this follows an alt chord or focus switch it may reach the pane as plain esc"
             );
             self.lone_escape_recently_flushed = true;
@@ -324,17 +343,26 @@ impl RawInputByteFramer {
         }
 
         if starts_with_incomplete_utf8_char(&self.buffer) {
-            tracing::trace!(bytes = ?self.buffer, "waiting for UTF-8 continuation bytes");
+            tracing::trace!(
+                byte_count = self.buffer.len(),
+                "waiting for UTF-8 continuation bytes"
+            );
             return chunks;
         }
 
         if self.buffer.first() == Some(&ESC) && starts_with_incomplete_utf8_char(&self.buffer[1..])
         {
-            tracing::trace!(bytes = ?self.buffer, "waiting for escaped UTF-8 continuation bytes");
+            tracing::trace!(
+                byte_count = self.buffer.len(),
+                "waiting for escaped UTF-8 continuation bytes"
+            );
             return chunks;
         }
 
-        tracing::debug!(bytes = ?self.buffer, "dropping incomplete raw input buffer after timeout");
+        tracing::debug!(
+            byte_count = self.buffer.len(),
+            "dropping incomplete raw input buffer after timeout"
+        );
         self.lone_escape_recently_flushed = false;
         self.buffer.clear();
         chunks
@@ -488,7 +516,11 @@ fn drain_buffer(buffer: &mut Vec<u8>, tx: &mpsc::Sender<RawInputEvent>) {
         let Some((event, _consumed)) = extract_one_event(&bytes) else {
             continue;
         };
-        tracing::debug!(raw_bytes = ?bytes, event = ?event, "raw input event parsed");
+        tracing::debug!(
+            byte_count = bytes.len(),
+            event_kind = event.log_kind(),
+            "raw input event parsed"
+        );
         let _ = tx.blocking_send(event);
     }
 }
@@ -919,6 +951,15 @@ fn parse_mouse_cb(cb: u8) -> Option<(MouseEventKind, KeyModifiers)> {
 mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEventKind};
+
+    #[test]
+    fn raw_input_log_kind_never_contains_input_content() {
+        let secret = RawInputEvent::Paste("do-not-log-this-secret".into());
+        let key = RawInputEvent::Key(TerminalKey::new(KeyCode::Char('s'), KeyModifiers::empty()));
+
+        assert_eq!(secret.log_kind(), "paste");
+        assert_eq!(key.log_kind(), "key");
+    }
 
     fn assert_raw_key(event: RawInputEvent, code: KeyCode, modifiers: KeyModifiers) {
         let RawInputEvent::Key(key) = event else {

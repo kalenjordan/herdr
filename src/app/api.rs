@@ -927,6 +927,13 @@ impl App {
             Method::NotificationShow(params) => {
                 return self.handle_notification_show(request.id, params);
             }
+            Method::SecretRequest(_) => {
+                return responses::encode_error(
+                    request.id,
+                    "invalid_request",
+                    "secret.request is handled asynchronously by the app runtime",
+                );
+            }
             Method::ClientWindowTitleSet(_) | Method::ClientWindowTitleClear(_) => {
                 return responses::encode_success(
                     request.id,
