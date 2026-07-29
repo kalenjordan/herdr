@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Added agent-requested masked secret entry with `herdr secret request`, allowing Herdr to update a workspace `.env` file without sending the value through the pane or API response.
+- Added agent-requested clipboard secret entry with `herdr secret request`, allowing Herdr to update a workspace `.env` file without sending the value through the pane or API response.
 
 ### Added
 - Copy mode now supports literal smart-case search with `/` and `?`, repeating with `n` and `N`, match highlighting, and tmux-style cross-line `w`/`b`/`e` word motions. (#1230)

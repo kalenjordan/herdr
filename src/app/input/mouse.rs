@@ -52,7 +52,6 @@ pub(super) enum MouseAction {
         ratio: f32,
     },
     RenameModal(ModalAction),
-    SecretModal(ModalAction),
     ConfirmCloseAccept,
     ContextMenu {
         menu: ContextMenuState,
@@ -405,21 +404,6 @@ impl AppState {
                         })
                         .unwrap_or(ModalAction::Cancel);
                     return Some(MouseAction::RenameModal(action));
-                }
-
-                if self.mode == Mode::SecretPrompt {
-                    let action = self
-                        .onboarding_modal_inner(68, 11)
-                        .map(crate::ui::secret_prompt_button_rects)
-                        .and_then(|(save, cancel)| {
-                            modal_action_from_buttons(
-                                mouse.column,
-                                mouse.row,
-                                &[(save, ModalAction::Save), (cancel, ModalAction::Cancel)],
-                            )
-                        })
-                        .unwrap_or(ModalAction::Cancel);
-                    return Some(MouseAction::SecretModal(action));
                 }
 
                 if self.mode == Mode::ContextMenu {

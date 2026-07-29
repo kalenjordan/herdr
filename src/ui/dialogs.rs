@@ -39,25 +39,6 @@ pub(crate) fn rename_button_rects(inner: Rect) -> (Rect, Rect, Rect) {
     (rects[0], rects[1], rects[2])
 }
 
-pub(crate) fn secret_prompt_button_rects(inner: Rect) -> (Rect, Rect) {
-    let rects = action_button_row_rects(
-        inner,
-        &[
-            ActionButtonSpec {
-                hint: Some("↵"),
-                label: "add",
-            },
-            ActionButtonSpec {
-                hint: Some("esc"),
-                label: "cancel",
-            },
-        ],
-        2,
-        2,
-    );
-    (rects[0], rects[1])
-}
-
 pub(super) fn render_rename_overlay(app: &AppState, frame: &mut Frame, area: Rect) {
     super::dim_background(frame, area);
 
@@ -118,95 +99,6 @@ pub(super) fn render_rename_overlay(app: &AppState, frame: &mut Frame, area: Rec
         Style::default()
             .fg(app.palette.text)
             .bg(app.palette.surface0)
-            .add_modifier(Modifier::BOLD),
-    );
-    render_action_button(
-        frame,
-        cancel_rect,
-        Some("esc"),
-        "cancel",
-        Style::default()
-            .fg(app.palette.text)
-            .bg(app.palette.surface0)
-            .add_modifier(Modifier::BOLD),
-    );
-}
-
-pub(super) fn render_secret_prompt_overlay(app: &AppState, frame: &mut Frame, area: Rect) {
-    let Some(prompt) = app.secret_prompt.as_ref() else {
-        return;
-    };
-    super::dim_background(frame, area);
-    let Some(inner) = render_modal_shell(frame, area, 68, 11, &app.palette) else {
-        return;
-    };
-    if inner.height < 8 {
-        return;
-    }
-
-    let rows = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Min(0),
-    ])
-    .areas::<8>(inner);
-    render_modal_header(frame, rows[0], "add secret", &app.palette);
-    let label = prompt.label.as_deref().unwrap_or("secret value");
-    frame.render_widget(
-        Paragraph::new(format!(" {label}")).style(Style::default().fg(app.palette.text)),
-        rows[1],
-    );
-    frame.render_widget(
-        Paragraph::new(format!(" {}  →  {}", prompt.name, prompt.file))
-            .style(Style::default().fg(app.palette.subtext0)),
-        rows[2],
-    );
-    let bullets = "•".repeat(prompt.value.chars().count().min(56));
-    frame.render_widget(Clear, rows[4]);
-    frame.render_widget(
-        Paragraph::new(format!(" {bullets}█")).style(
-            Style::default()
-                .fg(app.palette.text)
-                .bg(app.palette.surface0),
-        ),
-        rows[4],
-    );
-    let status = if let Some(error) = prompt.error.as_deref() {
-        error
-    } else if prompt.replaces_existing {
-        "existing value will be replaced"
-    } else {
-        "value stays outside the pane and agent transcript"
-    };
-    frame.render_widget(
-        Paragraph::new(format!(" {status}")).style(Style::default().fg(
-            if prompt.error.is_some() {
-                app.palette.red
-            } else {
-                app.palette.subtext0
-            },
-        )),
-        rows[5],
-    );
-
-    let (save_rect, cancel_rect) = secret_prompt_button_rects(inner);
-    render_action_button(
-        frame,
-        save_rect,
-        Some("↵"),
-        if prompt.replaces_existing {
-            "replace"
-        } else {
-            "add"
-        },
-        Style::default()
-            .fg(panel_contrast_fg(&app.palette))
-            .bg(app.palette.accent)
             .add_modifier(Modifier::BOLD),
     );
     render_action_button(

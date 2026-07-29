@@ -22,11 +22,9 @@ mod tabs;
 mod text;
 mod widgets;
 
-pub(crate) use self::dialogs::secret_prompt_button_rects;
 use self::dialogs::{
     render_confirm_close_overlay, render_new_linked_worktree_overlay,
     render_open_existing_worktree_overlay, render_remove_worktree_overlay, render_rename_overlay,
-    render_secret_prompt_overlay,
 };
 use self::keybind_help::render_keybind_help_overlay;
 use self::menus::{
@@ -459,7 +457,6 @@ pub fn render_with_runtime_registry(
         Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane => {
             render_rename_overlay(app, frame, frame.area())
         }
-        Mode::SecretPrompt => render_secret_prompt_overlay(app, frame, frame.area()),
         Mode::NewLinkedWorktree => render_new_linked_worktree_overlay(app, frame, frame.area()),
         Mode::OpenExistingWorktree => {
             render_open_existing_worktree_overlay(app, frame, frame.area())

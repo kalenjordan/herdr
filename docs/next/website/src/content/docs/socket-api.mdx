@@ -306,19 +306,19 @@ The response reports whether anything was shown:
 
 Possible reasons are `shown`, `disabled`, `rate_limited`, `no_foreground_client`, and `busy`. `disabled` means `ui.toast.delivery = "off"`. `busy` means an existing in-app toast was not replaced. Terminal and system delivery are best-effort through the current foreground attached Herdr client.
 
-Request a masked prompt in the foreground Herdr client:
+Add a secret from the foreground machine's text clipboard:
 
 ```json
 {"id":"req_secret","method":"secret.request","params":{"name":"OPENAI_API_KEY","pane_id":"w1:p1","file":".env","label":"OpenAI API key"}}
 ```
 
 Herdr resolves the relative environment file from the target pane's workspace
-root. The file must be named `.env` or `.env.*`. The secret value is entered
-only in the Herdr modal and is never included in the request or response. The
-response reports `added`, `replaced`, or `cancelled`, plus the variable name and
-relative file path. This prevents the secret from entering the agent transcript,
-but it cannot prevent an agent with filesystem access from reading the
-environment file later.
+root. The file must be named `.env` or `.env.*`. The secret value is read
+directly from the clipboard and is never included in the request or response.
+It must be non-empty, single-line text. The response reports `added` or
+`replaced`, plus the variable name and relative file path. This prevents the
+secret from entering the agent transcript, but it cannot prevent an agent with
+filesystem access from reading the environment file later.
 
 Set or clear the foreground client's outer terminal window title:
 

@@ -57,7 +57,7 @@ mod terminal;
 pub(crate) use self::{
     modal::{
         handle_global_menu_key, handle_keybind_help_key, handle_navigator_key,
-        insert_navigator_search_text, insert_rename_input_text, leave_modal, ModalAction,
+        insert_navigator_search_text, insert_rename_input_text, ModalAction,
     },
     navigate::{
         terminal_direct_indexed_navigation_action, terminal_direct_non_indexed_navigation_action,
@@ -99,7 +99,6 @@ impl App {
                 Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane => {
                     self.handle_rename_key_via_api(key_event)
                 }
-                Mode::SecretPrompt => self.handle_secret_key(key_event),
                 Mode::NewLinkedWorktree => self.handle_worktree_create_key(key_event),
                 Mode::OpenExistingWorktree => self.handle_worktree_open_key(key_event),
                 Mode::ConfirmRemoveWorktree => self.handle_worktree_remove_key(key_event),
@@ -140,10 +139,6 @@ impl App {
         match self.state.mode {
             Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane => {
                 insert_rename_input_text(&mut self.state, text);
-                true
-            }
-            Mode::SecretPrompt => {
-                self.insert_secret_text(text);
                 true
             }
             Mode::NewLinkedWorktree => {
@@ -351,7 +346,6 @@ impl App {
                     MouseAction::RenameModal(action) => {
                         self.apply_rename_mouse_action_via_api(action)
                     }
-                    MouseAction::SecretModal(action) => self.apply_secret_mouse_action(action),
                     MouseAction::ConfirmCloseAccept => self.confirm_close_accept_via_api(),
                     MouseAction::ContextMenu { menu, idx } => {
                         self.apply_context_menu_action_via_api(menu, idx)
@@ -589,11 +583,9 @@ pub(crate) fn is_modal_paste_shortcut(key: &KeyEvent) -> bool {
 
 pub(crate) fn modal_paste_target_active(state: &AppState) -> bool {
     match state.mode {
-        Mode::RenameWorkspace
-        | Mode::RenameTab
-        | Mode::RenamePane
-        | Mode::SecretPrompt
-        | Mode::NewLinkedWorktree => true,
+        Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane | Mode::NewLinkedWorktree => {
+            true
+        }
         Mode::OpenExistingWorktree => state
             .worktree_open
             .as_ref()

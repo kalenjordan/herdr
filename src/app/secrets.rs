@@ -6,14 +6,7 @@ use crate::api::schema::{
     SuccessResponse,
 };
 
-use super::{state::SecretPromptState, App, Mode};
-
-pub(crate) struct PendingSecretRequest {
-    id: String,
-    root: PathBuf,
-    path: PathBuf,
-    respond_to: std::sync::mpsc::Sender<String>,
-}
+use super::App;
 
 impl App {
     pub(crate) fn handle_deferred_secret_request(
@@ -22,19 +15,25 @@ impl App {
         params: SecretRequestParams,
         respond_to: std::sync::mpsc::Sender<String>,
     ) -> bool {
-        if self.pending_secret_request.is_some()
-            || self.state.secret_prompt.is_some()
-            || !secret_prompt_mode_available(self.state.mode)
-        {
+        let Some(value) = crate::platform::read_clipboard_text() else {
             send_error(
                 respond_to,
                 id,
-                "secret_request_busy",
-                "Herdr is busy with another prompt or interaction",
+                "clipboard_unavailable",
+                "could not read text from the clipboard",
             );
             return false;
-        }
+        };
+        self.handle_secret_request_value(id, params, respond_to, value)
+    }
 
+    fn handle_secret_request_value(
+        &self,
+        id: String,
+        params: SecretRequestParams,
+        respond_to: std::sync::mpsc::Sender<String>,
+        value: String,
+    ) -> bool {
         let result = self.prepare_secret_request(&params);
         let (root, path, display_path, replaces_existing) = match result {
             Ok(prepared) => prepared,
@@ -43,23 +42,45 @@ impl App {
                 return false;
             }
         };
+        if value.is_empty() {
+            send_error(
+                respond_to,
+                id,
+                "clipboard_empty",
+                "copy a secret value to the clipboard and try again",
+            );
+            return false;
+        }
+        if value.contains(['\r', '\n', '\0']) {
+            send_error(
+                respond_to,
+                id,
+                "invalid_clipboard_secret",
+                "clipboard secret must be a single line without NUL characters",
+            );
+            return false;
+        }
 
-        self.state.secret_prompt = Some(SecretPromptState {
-            name: params.name,
-            label: params.label,
-            file: display_path,
-            value: String::new(),
-            replaces_existing,
-            error: None,
-        });
-        self.pending_secret_request = Some(PendingSecretRequest {
-            id,
-            root,
-            path,
-            respond_to,
-        });
-        self.state.mode = Mode::SecretPrompt;
-        true
+        let outcome = if replaces_existing {
+            SecretRequestOutcome::Replaced
+        } else {
+            SecretRequestOutcome::Added
+        };
+        let write_result = ensure_secret_path_contained(&root, &path)
+            .map_err(std::io::Error::other)
+            .and_then(|()| upsert_env_value(&path, &params.name, &value));
+        if let Err(error) = write_result {
+            send_error(
+                respond_to,
+                id,
+                "secret_request_failed",
+                format!("could not update file: {error}"),
+            );
+            return false;
+        }
+
+        send_success(respond_to, id, outcome, params.name, display_path);
+        false
     }
 
     fn prepare_secret_request(
@@ -108,125 +129,6 @@ impl App {
             replaces_existing,
         ))
     }
-
-    pub(crate) fn insert_secret_text(&mut self, text: &str) {
-        if let Some(prompt) = self.state.secret_prompt.as_mut() {
-            prompt.value.push_str(text);
-            prompt.error = None;
-        }
-    }
-
-    pub(crate) fn handle_secret_key(&mut self, key: crossterm::event::KeyEvent) {
-        use crossterm::event::{KeyCode, KeyModifiers};
-
-        match key.code {
-            KeyCode::Esc => self.finish_secret_request(SecretFinish::Cancel),
-            KeyCode::Enter => self.finish_secret_request(SecretFinish::Submit),
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                if let Some(prompt) = self.state.secret_prompt.as_mut() {
-                    prompt.value.clear();
-                    prompt.error = None;
-                }
-            }
-            KeyCode::Backspace => {
-                if let Some(prompt) = self.state.secret_prompt.as_mut() {
-                    prompt.value.pop();
-                    prompt.error = None;
-                }
-            }
-            KeyCode::Char(character)
-                if key.modifiers.difference(KeyModifiers::SHIFT).is_empty() =>
-            {
-                self.insert_secret_text(&character.to_string());
-            }
-            _ => {}
-        }
-    }
-
-    pub(crate) fn apply_secret_mouse_action(&mut self, action: super::input::ModalAction) {
-        match action {
-            super::input::ModalAction::Save => self.finish_secret_request(SecretFinish::Submit),
-            super::input::ModalAction::Cancel => self.finish_secret_request(SecretFinish::Cancel),
-            _ => {}
-        }
-    }
-
-    fn finish_secret_request(&mut self, finish: SecretFinish) {
-        let Some(pending) = self.pending_secret_request.take() else {
-            self.state.secret_prompt = None;
-            super::input::leave_modal(&mut self.state);
-            return;
-        };
-        let Some(mut prompt) = self.state.secret_prompt.take() else {
-            send_error(
-                pending.respond_to,
-                pending.id,
-                "secret_request_failed",
-                "secret prompt state was lost",
-            );
-            super::input::leave_modal(&mut self.state);
-            return;
-        };
-
-        if finish == SecretFinish::Cancel {
-            send_success(
-                pending.respond_to,
-                pending.id,
-                SecretRequestOutcome::Cancelled,
-                prompt.name,
-                prompt.file,
-            );
-            super::input::leave_modal(&mut self.state);
-            return;
-        }
-
-        if prompt.value.is_empty() {
-            prompt.error = Some("paste a value before saving".into());
-            self.state.secret_prompt = Some(prompt);
-            self.pending_secret_request = Some(pending);
-            return;
-        }
-        if prompt.value.contains(['\r', '\n', '\0']) {
-            prompt.error = Some("multiline and NUL-containing values are not supported".into());
-            self.state.secret_prompt = Some(prompt);
-            self.pending_secret_request = Some(pending);
-            return;
-        }
-
-        let outcome = if prompt.replaces_existing {
-            SecretRequestOutcome::Replaced
-        } else {
-            SecretRequestOutcome::Added
-        };
-        let write_result = ensure_secret_path_contained(&pending.root, &pending.path)
-            .map_err(std::io::Error::other)
-            .and_then(|()| upsert_env_value(&pending.path, &prompt.name, &prompt.value));
-        if let Err(error) = write_result {
-            prompt.error = Some(format!("could not update file: {error}"));
-            self.state.secret_prompt = Some(prompt);
-            self.pending_secret_request = Some(pending);
-            return;
-        }
-
-        send_success(
-            pending.respond_to,
-            pending.id,
-            outcome,
-            prompt.name,
-            prompt.file,
-        );
-        super::input::leave_modal(&mut self.state);
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SecretFinish {
-    Submit,
-    Cancel,
-}
-
-fn secret_prompt_mode_available(mode: Mode) -> bool {
-    matches!(mode, Mode::Terminal | Mode::Navigate)
 }
 
 fn valid_env_name(name: &str) -> bool {
@@ -470,64 +372,6 @@ mod tests {
     }
 
     #[test]
-    fn secret_request_does_not_replace_an_open_modal() {
-        let mut app = test_app();
-        app.state.mode = Mode::Settings;
-        let (respond_to, response_rx) = std::sync::mpsc::channel();
-
-        assert!(!app.handle_deferred_secret_request(
-            "secret".into(),
-            SecretRequestParams {
-                name: "OPENAI_API_KEY".into(),
-                pane_id: "w1:p1".into(),
-                file: ".env".into(),
-                label: None,
-            },
-            respond_to,
-        ));
-
-        assert_eq!(app.state.mode, Mode::Settings);
-        assert!(app.state.secret_prompt.is_none());
-        let response: ErrorResponse =
-            serde_json::from_str(&response_rx.recv().expect("busy response")).expect("json");
-        assert_eq!(response.error.code, "secret_request_busy");
-    }
-
-    #[test]
-    fn failed_write_keeps_secret_value_for_retry() {
-        let directory = unique_temp_path("write-failure");
-        std::fs::create_dir_all(&directory).expect("directory");
-        let mut app = test_app();
-        let (respond_to, response_rx) = std::sync::mpsc::channel();
-        app.state.mode = Mode::SecretPrompt;
-        app.state.secret_prompt = Some(SecretPromptState {
-            name: "TOKEN".into(),
-            label: None,
-            file: ".env".into(),
-            value: "retain-on-error".into(),
-            replaces_existing: false,
-            error: None,
-        });
-        app.pending_secret_request = Some(PendingSecretRequest {
-            id: "secret".into(),
-            root: directory.parent().expect("directory parent").to_path_buf(),
-            path: directory.clone(),
-            respond_to,
-        });
-
-        app.finish_secret_request(SecretFinish::Submit);
-
-        let prompt = app.state.secret_prompt.as_ref().expect("prompt remains");
-        assert_eq!(prompt.value, "retain-on-error");
-        assert!(prompt.error.is_some());
-        assert!(matches!(
-            response_rx.try_recv(),
-            Err(std::sync::mpsc::TryRecvError::Empty)
-        ));
-        std::fs::remove_dir_all(directory).expect("cleanup");
-    }
-
-    #[test]
     fn secret_request_adds_value_and_returns_only_metadata() {
         let directory = unique_temp_path("request-add");
         std::fs::create_dir_all(&directory).expect("directory");
@@ -537,10 +381,9 @@ mod tests {
         let mut app = test_app();
         app.state.workspaces = vec![workspace];
         app.state.active = Some(0);
-        app.state.mode = Mode::Terminal;
         let (respond_to, response_rx) = std::sync::mpsc::channel();
 
-        assert!(app.handle_deferred_secret_request(
+        assert!(!app.handle_secret_request_value(
             "secret".into(),
             SecretRequestParams {
                 name: "OPENAI_API_KEY".into(),
@@ -549,9 +392,8 @@ mod tests {
                 label: Some("OpenAI API key".into()),
             },
             respond_to,
+            "test-value".into(),
         ));
-        app.insert_secret_text("test-value");
-        app.finish_secret_request(SecretFinish::Submit);
 
         let response_text = response_rx.recv().expect("success response");
         assert!(!response_text.contains("test-value"));
@@ -584,40 +426,33 @@ mod tests {
     }
 
     #[test]
-    fn cancelling_secret_request_returns_metadata_without_writing() {
-        let directory = unique_temp_path("request-cancel");
+    fn invalid_clipboard_value_is_rejected_without_exposure() {
+        let directory = unique_temp_path("request-invalid-clipboard");
         std::fs::create_dir_all(&directory).expect("directory");
+        let mut workspace = crate::workspace::Workspace::test_new("secret");
+        workspace.identity_cwd = directory.clone();
+        let pane_id = format!("{}:p1", workspace.id);
         let mut app = test_app();
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
         let (respond_to, response_rx) = std::sync::mpsc::channel();
-        app.state.mode = Mode::SecretPrompt;
-        app.state.secret_prompt = Some(SecretPromptState {
-            name: "TOKEN".into(),
-            label: None,
-            file: ".env".into(),
-            value: "discard-me".into(),
-            replaces_existing: false,
-            error: None,
-        });
-        app.pending_secret_request = Some(PendingSecretRequest {
-            id: "secret".into(),
-            root: directory.clone(),
-            path: directory.join(".env"),
-            respond_to,
-        });
 
-        app.finish_secret_request(SecretFinish::Cancel);
-
-        let response_text = response_rx.recv().expect("cancel response");
-        assert!(!response_text.contains("discard-me"));
-        let response: SuccessResponse = serde_json::from_str(&response_text).expect("json");
-        assert_eq!(
-            response.result,
-            ResponseResult::SecretRequest {
-                outcome: SecretRequestOutcome::Cancelled,
+        assert!(!app.handle_secret_request_value(
+            "secret".into(),
+            SecretRequestParams {
                 name: "TOKEN".into(),
+                pane_id,
                 file: ".env".into(),
-            }
-        );
+                label: None,
+            },
+            respond_to,
+            "must-not-leak\nsecond-line".into(),
+        ));
+
+        let response_text = response_rx.recv().expect("error response");
+        assert!(!response_text.contains("must-not-leak"));
+        let response: ErrorResponse = serde_json::from_str(&response_text).expect("json");
+        assert_eq!(response.error.code, "invalid_clipboard_secret");
         assert!(!directory.join(".env").exists());
         std::fs::remove_dir_all(directory).expect("cleanup");
     }

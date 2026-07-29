@@ -756,7 +756,6 @@ pub enum Mode {
     RenameWorkspace,
     RenameTab,
     RenamePane,
-    SecretPrompt,
     NewLinkedWorktree,
     OpenExistingWorktree,
     ConfirmRemoveWorktree,
@@ -1319,16 +1318,6 @@ pub struct KeybindHelpState {
     pub scroll: u16,
 }
 
-#[derive(Default)]
-pub struct SecretPromptState {
-    pub name: String,
-    pub label: Option<String>,
-    pub file: String,
-    pub value: String,
-    pub replaces_existing: bool,
-    pub error: Option<String>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidebarWidthSource {
     ConfigDefault,
@@ -1392,7 +1381,6 @@ pub struct AppState {
     pub request_complete_onboarding: bool,
     pub name_input: String,
     pub name_input_replace_on_type: bool,
-    pub secret_prompt: Option<SecretPromptState>,
     pub release_notes: Option<ReleaseNotesState>,
     pub product_announcement: Option<ProductAnnouncementState>,
     pub keybind_help: KeybindHelpState,
@@ -1754,7 +1742,6 @@ impl AppState {
             request_complete_onboarding: false,
             name_input: String::new(),
             name_input_replace_on_type: false,
-            secret_prompt: None,
             release_notes: None,
             product_announcement: None,
             keybind_help: KeybindHelpState { scroll: 0 },
