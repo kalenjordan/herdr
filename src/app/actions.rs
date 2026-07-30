@@ -2525,28 +2525,84 @@ struct PathSpan {
 
 fn path_spans(row: &str, cells: &[TextCell], cwd: Option<&Path>) -> Vec<PathSpan> {
     let mut spans = Vec::new();
-    for span in quoted_path_spans(cells)
-        .into_iter()
-        .chain(token_spans(cells))
-    {
-        if spans_overlap_any(
-            span,
-            spans.iter().map(|path_span: &PathSpan| path_span.span),
-        ) {
+    for span in quoted_path_spans(cells) {
+        push_resolved_path_span(&mut spans, row, span, cwd);
+    }
+    for path_span in unquoted_path_spans(row, cells, cwd) {
+        if !spans_overlap_any(path_span.span, spans.iter().map(|existing| existing.span)) {
+            spans.push(path_span);
+        }
+    }
+    for span in token_spans(cells) {
+        push_resolved_path_span(&mut spans, row, span, cwd);
+    }
+    spans
+}
+
+fn push_resolved_path_span(
+    spans: &mut Vec<PathSpan>,
+    row: &str,
+    span: CellSpan,
+    cwd: Option<&Path>,
+) {
+    if spans_overlap_any(
+        span,
+        spans.iter().map(|path_span: &PathSpan| path_span.span),
+    ) {
+        return;
+    }
+    let start_byte = byte_index_for_cell(row, span.start);
+    let end_byte = byte_index_after_cell(row, span.end);
+    let Some(text) = row.get(start_byte..end_byte) else {
+        return;
+    };
+    let Some(path) = resolve_visible_path(text, cwd) else {
+        return;
+    };
+    spans.push(PathSpan {
+        span,
+        uri: file_uri_for_path(&path),
+    });
+}
+
+fn unquoted_path_spans(row: &str, cells: &[TextCell], cwd: Option<&Path>) -> Vec<PathSpan> {
+    let mut spans = Vec::new();
+    for start in 0..cells.len() {
+        let starts_path = starts_with_chars(&cells[start..], "~/")
+            || starts_with_chars(&cells[start..], "./")
+            || starts_with_chars(&cells[start..], "../")
+            || cells[start].ch == '/';
+        let has_boundary = start == 0
+            || cells[start - 1].ch.is_whitespace()
+            || is_leading_token_wrapper(cells[start - 1].ch);
+        if !starts_path || !has_boundary {
             continue;
         }
-        let start_byte = byte_index_for_cell(row, span.start);
-        let end_byte = byte_index_after_cell(row, span.end);
-        let Some(text) = row.get(start_byte..end_byte) else {
-            continue;
-        };
-        let Some(path) = resolve_visible_path(text, cwd) else {
-            continue;
-        };
-        spans.push(PathSpan {
-            span,
-            uri: file_uri_for_path(&path),
-        });
+
+        for end in (start..cells.len()).rev() {
+            let has_end_boundary = end + 1 == cells.len()
+                || cells[end + 1].ch.is_whitespace()
+                || is_trailing_token_wrapper(cells[end + 1].ch);
+            if !has_end_boundary {
+                continue;
+            }
+            let Some(span) = trim_token_edges(cells, CellSpan { start, end }) else {
+                continue;
+            };
+            let start_byte = byte_index_for_cell(row, span.start);
+            let end_byte = byte_index_after_cell(row, span.end);
+            let Some(text) = row.get(start_byte..end_byte) else {
+                continue;
+            };
+            let Some(path) = resolve_visible_path(text, cwd) else {
+                continue;
+            };
+            spans.push(PathSpan {
+                span,
+                uri: file_uri_for_path(&path),
+            });
+            break;
+        }
     }
     spans
 }
@@ -3983,6 +4039,30 @@ mod tests {
             uri,
             format!("file://{}", file.to_string_lossy().replace(' ', "%20"))
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn clickable_spans_include_unquoted_home_paths_with_spaces() {
+        let Some(home) = std::env::var_os("HOME") else {
+            return;
+        };
+        let dir = PathBuf::from(home).join(format!("herdr clickable path {}", std::process::id()));
+        let file = dir.join("audio.mp3");
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        std::fs::write(&file, b"audio").expect("write file");
+        let visible = format!(
+            "~/{}",
+            file.strip_prefix(PathBuf::from(std::env::var_os("HOME").expect("home")))
+                .expect("file under home")
+                .display()
+        );
+        let row = format!("open {visible}");
+
+        let uri = selected_clickable_uri(&row, "audio.mp3", None)
+            .expect("unquoted path with spaces should be clickable");
+
+        assert_eq!(uri, file_uri_for_path(&file));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
