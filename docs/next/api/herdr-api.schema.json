@@ -1273,6 +1273,21 @@
           ],
           "type": "object"
         },
+        "CodexThreadRenameCurrentParams": {
+          "properties": {
+            "caller_pane_id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "caller_pane_id",
+            "name"
+          ],
+          "type": "object"
+        },
         "EmptyParams": {
           "type": "object"
         },
@@ -3934,6 +3949,22 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/EmptyParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "codex.thread.rename_current",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/CodexThreadRenameCurrentParams"
             }
           },
           "required": [
@@ -8376,6 +8407,26 @@
                 "type",
                 "changed",
                 "reason"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "pane_id": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "codex_thread_renamed",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "pane_id",
+                "name"
               ],
               "type": "object"
             },
