@@ -28,7 +28,6 @@ pub(super) fn command() -> Command {
         .subcommand(status_command())
         .subcommand(config_command())
         .subcommand(channel_command())
-        .subcommand(codex_command())
         .subcommand(server_command())
         .subcommand(api_command())
         .subcommand(workspace_command())
@@ -44,17 +43,6 @@ pub(super) fn command() -> Command {
         .subcommand(integration_command())
         .subcommand(plugin_command());
     disable_auto_help(command)
-}
-
-fn codex_command() -> Command {
-    Command::new("codex")
-        .about("Manage the current Codex thread")
-        .subcommand(
-            Command::new("rename-thread")
-                .about("Rename the Codex thread in the calling Herdr pane")
-                .arg(flag("current").required(true))
-                .arg(required("name", "NAME").num_args(1..)),
-        )
 }
 
 fn disable_auto_help(command: Command) -> Command {

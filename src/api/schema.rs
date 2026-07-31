@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 pub mod agents;
-pub mod codex;
 pub mod common;
 pub mod events;
 pub mod integrations;
@@ -15,7 +14,6 @@ pub mod workspaces;
 pub mod worktrees;
 
 pub use agents::*;
-pub use codex::*;
 pub use common::*;
 pub use events::*;
 pub use integrations::*;
@@ -65,8 +63,6 @@ pub enum Method {
     ClientWindowTitleSet(ClientWindowTitleSetParams),
     #[serde(rename = "client.window_title.clear")]
     ClientWindowTitleClear(EmptyParams),
-    #[serde(rename = "codex.thread.rename_current")]
-    CodexThreadRenameCurrent(CodexThreadRenameCurrentParams),
     #[serde(rename = "session.snapshot")]
     SessionSnapshot(EmptyParams),
     #[serde(rename = "workspace.create")]

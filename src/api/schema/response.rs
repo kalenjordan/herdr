@@ -178,10 +178,6 @@ pub enum ResponseResult {
         changed: bool,
         reason: ClientWindowTitleReason,
     },
-    CodexThreadRenamed {
-        pane_id: String,
-        name: String,
-    },
     IntegrationInstall {
         target: IntegrationTarget,
         details: IntegrationInstallResult,

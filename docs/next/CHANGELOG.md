@@ -5,7 +5,6 @@
 - Added agent-requested clipboard secret entry with `herdr secret request`, allowing Herdr to update a workspace `.env` file without sending the value through the pane or API response.
 
 ### Added
-- Added `herdr codex rename-thread --current <name>` so agents can rename their own live Codex thread through a scoped slash-command injection into the calling pane.
 - Copy mode now supports literal smart-case search with `/` and `?`, repeating with `n` and `N`, match highlighting, and tmux-style cross-line `w`/`b`/`e` word motions. (#1230)
 - Desktop workspaces now show the number of changed repository files in the tab row and beside the sidebar branch label.
 - Added tab-aware switchers: `cmd+e` cycles recently used tabs and `cmd+d` cycles tabs containing done or blocked agents, switching when Command is released.
