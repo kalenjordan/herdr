@@ -78,8 +78,6 @@ When the change is ready, fast-forward the shared checkout at `../herdr` to the 
 
 If the current session is already inside an isolated task worktree, keep using it. Do not create nested worktrees.
 
-Before committing, propose the commit message and get alignment.
-
 After the change is integrated, remove the task worktree and delete the task branch locally and remotely.
 
 ## Testing
@@ -208,8 +206,6 @@ Put local PRDs, planning notes, and exploratory specs under `.local/prd/`; `.loc
 ## Commit Style
 
 Use lowercase conventional commits, no emojis, and no AI co-author lines. Commit subjects feed preview release notes, so keep them descriptive.
-
-Before committing, propose the commit message and get alignment.
 
 Before creating a local commit, identify its promotion path to `master` and
 the release that will carry it. Do not leave user-facing or operational
