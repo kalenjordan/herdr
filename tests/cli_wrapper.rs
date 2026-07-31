@@ -898,6 +898,66 @@ fn pane_run_sends_one_send_input_request_with_enter_key() {
 }
 
 #[test]
+fn codex_rename_thread_uses_calling_pane_without_thread_id_argument() {
+    let base = unique_test_dir();
+    fs::create_dir_all(&base).unwrap();
+    let socket_path = base.join("herdr.sock");
+    let listener = UnixListener::bind(&socket_path).unwrap();
+
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut line = String::new();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        reader.read_line(&mut line).unwrap();
+        stream
+            .write_all(
+                br#"{"id":"cli:codex:rename-thread","result":{"type":"codex_thread_renamed","pane_id":"1-2","name":"API cleanup"}}"#,
+            )
+            .unwrap();
+        stream.write_all(b"\n").unwrap();
+        stream.flush().unwrap();
+        line
+    });
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_herdr"));
+    let run = command
+        .args(["codex", "rename-thread", "--current", "API cleanup"])
+        .env("HERDR_SOCKET_PATH", &socket_path)
+        .env("HERDR_PANE_ID", "1-2")
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+
+    let request: serde_json::Value = serde_json::from_str(&server.join().unwrap()).unwrap();
+    assert_eq!(request["method"], "codex.thread.rename_current");
+    assert_eq!(request["params"]["caller_pane_id"], "1-2");
+    assert_eq!(request["params"]["name"], "API cleanup");
+    assert!(request["params"].get("thread_id").is_none());
+
+    cleanup_test_base(&base);
+}
+
+#[test]
+fn codex_rename_thread_requires_herdr_calling_pane() {
+    let base = unique_test_dir();
+    fs::create_dir_all(&base).unwrap();
+    let socket_path = base.join("missing.sock");
+
+    let run = run_cli(
+        &socket_path,
+        &["codex", "rename-thread", "--current", "API cleanup"],
+    );
+
+    assert_eq!(run.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&run.stderr).contains("current Herdr pane is unavailable"));
+    cleanup_test_base(&base);
+}
+
+#[test]
 fn pane_report_metadata_sends_presentation_request() {
     let base = unique_test_dir();
     fs::create_dir_all(&base).unwrap();

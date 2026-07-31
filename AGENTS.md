@@ -163,6 +163,12 @@ same version as the live server. Verify the server log contains
 requires restarting or re-executing the TUI client, handle that through the
 supported production flow when possible and state clearly what remains.
 
+When investigating automatic Herdr tab naming or Codex session renaming,
+inspect the Codex hooks in `~/.codex/hooks.json`. On Kalen's machine this file
+is managed by the dotfiles repository and may invoke
+`~/repos/dotfiles/bin/codex-herdr-tab-name`. Treat that hook as a possible
+source of naming behavior outside Herdr itself.
+
 When Kalen says "disable notifications," set
 `HERDR_FOCUS_NOTIFY_ENABLED=0` in
 `~/.config/herdr/plugins/config/herdr-focus-notify/.env`. When Kalen says

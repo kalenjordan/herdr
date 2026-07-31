@@ -168,6 +168,16 @@ herdr tab rename <tab_id> <label>
 herdr tab close <tab_id>
 ```
 
+## Codex threads
+
+```bash
+herdr codex rename-thread --current <name>
+```
+
+`codex rename-thread` reads the inherited `HERDR_PANE_ID` and submits Codex's
+`/rename` command to that pane. It does not accept a pane or thread ID as a
+command argument, and it does not rename the Herdr tab.
+
 ## Panes
 
 ```bash

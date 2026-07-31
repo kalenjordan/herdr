@@ -2,6 +2,7 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 mod agents;
+mod codex;
 mod env;
 mod integrations;
 mod layouts;
@@ -942,6 +943,9 @@ impl App {
                         reason: crate::api::schema::ClientWindowTitleReason::NoForegroundClient,
                     },
                 );
+            }
+            Method::CodexThreadRenameCurrent(params) => {
+                return self.handle_codex_thread_rename_current(request.id, params);
             }
             Method::SessionSnapshot(_) => return self.handle_session_snapshot(request.id),
             Method::WorkspaceList(_) => return self.handle_workspace_list(request.id),
