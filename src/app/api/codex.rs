@@ -59,7 +59,7 @@ impl App {
         };
 
         let command = format!("/rename {name}");
-        let text_bytes = encode_api_text(runtime, &command);
+        let mut input = encode_api_text(runtime, &command);
         let enter = match encode_api_keys(runtime, &["Enter".into()]) {
             Ok(mut keys) => keys.pop().unwrap_or_default(),
             Err(key) => {
@@ -70,14 +70,8 @@ impl App {
                 );
             }
         };
-        if let Err(err) = runtime.try_send_bytes(Bytes::from(text_bytes)) {
-            return encode_error(
-                id,
-                "codex_thread_rename_failed",
-                format!("failed to write rename command: {err}"),
-            );
-        }
-        if let Err(err) = runtime.try_send_bytes(Bytes::from(enter)) {
+        input.extend_from_slice(&enter);
+        if let Err(err) = runtime.try_send_bytes(Bytes::from(input)) {
             return encode_error(
                 id,
                 "codex_thread_rename_failed",
@@ -128,11 +122,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rename_injects_slash_command_into_calling_codex_pane() {
+    async fn rename_atomically_injects_slash_command_into_calling_codex_pane() {
         let (mut app, pane_id) = app_with_codex_session();
         let internal_pane_id = app.state.workspaces[0].tabs[0].root_pane;
         let (runtime, mut rx) =
-            crate::terminal::TerminalRuntime::test_with_channel_capacity(80, 24, 2);
+            crate::terminal::TerminalRuntime::test_with_channel_capacity(80, 24, 1);
         app.state.insert_test_runtime(internal_pane_id, runtime);
         let response = app.handle_codex_thread_rename_current(
             "rename".into(),
@@ -148,9 +142,8 @@ mod tests {
         assert_eq!(response["result"]["name"], "API cleanup");
         assert_eq!(
             rx.try_recv().unwrap(),
-            bytes::Bytes::from_static(b"/rename API cleanup")
+            bytes::Bytes::from_static(b"/rename API cleanup\r")
         );
-        assert_eq!(rx.try_recv().unwrap(), bytes::Bytes::from_static(b"\r"));
         assert!(rx.try_recv().is_err());
     }
 
