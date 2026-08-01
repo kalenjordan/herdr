@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use ratatui::layout::Rect;
 
 use crate::api::schema::{CodexThreadRenameCurrentParams, ResponseResult};
 use crate::app::App;
@@ -57,6 +58,13 @@ impl App {
                 "the calling Herdr pane has no terminal runtime",
             );
         };
+        if !codex_composer_is_empty(runtime) {
+            return encode_error(
+                id,
+                "codex_input_not_empty",
+                "the Codex input is not empty; thread rename was skipped",
+            );
+        }
 
         let command = format!("/rename {name}");
         let mut input = encode_api_text(runtime, &command);
@@ -87,6 +95,14 @@ impl App {
             },
         )
     }
+}
+
+fn codex_composer_is_empty(runtime: &crate::terminal::TerminalRuntime) -> bool {
+    let Some(cursor) = runtime.cursor_state(Rect::new(0, 0, u16::MAX, u16::MAX), true) else {
+        return false;
+    };
+
+    cursor.visible && cursor.x == 2
 }
 
 #[cfg(test)]
@@ -126,7 +142,13 @@ mod tests {
         let (mut app, pane_id) = app_with_codex_session();
         let internal_pane_id = app.state.workspaces[0].tabs[0].root_pane;
         let (runtime, mut rx) =
-            crate::terminal::TerminalRuntime::test_with_channel_capacity(80, 24, 1);
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                80,
+                24,
+                0,
+                b"\x1b[?25h\x1b[1;1H\xe2\x80\xba Summarize recent commits\x1b[1;3H",
+                1,
+            );
         app.state.insert_test_runtime(internal_pane_id, runtime);
         let response = app.handle_codex_thread_rename_current(
             "rename".into(),
@@ -144,6 +166,33 @@ mod tests {
             rx.try_recv().unwrap(),
             bytes::Bytes::from_static(b"/rename API cleanup\r")
         );
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn rename_skips_non_empty_codex_input() {
+        let (mut app, pane_id) = app_with_codex_session();
+        let internal_pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let (runtime, mut rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                80,
+                24,
+                0,
+                b"\x1b[?25h\x1b[1;1H\xe2\x80\xba draft reply\x1b[1;14H",
+                1,
+            );
+        app.state.insert_test_runtime(internal_pane_id, runtime);
+
+        let response = app.handle_codex_thread_rename_current(
+            "rename".into(),
+            CodexThreadRenameCurrentParams {
+                caller_pane_id: pane_id,
+                name: "API cleanup".into(),
+            },
+        );
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+
+        assert_eq!(response["error"]["code"], "codex_input_not_empty");
         assert!(rx.try_recv().is_err());
     }
 
