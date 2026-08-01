@@ -13,16 +13,14 @@ struct PreparedPaneInput {
     bytes: Bytes,
 }
 
-const PAGE_SCROLL_OVERLAP_LINES: usize = 6;
+const PANE_PAGE_SCROLL_LINES: usize = 20;
 
 fn is_modifier_only_key(code: &KeyCode) -> bool {
     matches!(code, KeyCode::Modifier(_))
 }
 
-fn pane_page_scroll_lines(height: u16) -> usize {
-    usize::from(height)
-        .saturating_sub(PAGE_SCROLL_OVERLAP_LINES)
-        .max(1)
+fn pane_page_scroll_lines(_height: u16) -> usize {
+    PANE_PAGE_SCROLL_LINES
 }
 
 impl App {
@@ -1455,10 +1453,10 @@ mod tests {
     }
 
     #[test]
-    fn page_scroll_preserves_six_lines_of_overlap() {
-        assert_eq!(pane_page_scroll_lines(18), 12);
-        assert_eq!(pane_page_scroll_lines(6), 1);
-        assert_eq!(pane_page_scroll_lines(1), 1);
+    fn page_scroll_uses_fixed_twenty_lines() {
+        assert_eq!(pane_page_scroll_lines(18), 20);
+        assert_eq!(pane_page_scroll_lines(6), 20);
+        assert_eq!(pane_page_scroll_lines(1), 20);
     }
 
     #[tokio::test]
