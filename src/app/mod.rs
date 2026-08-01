@@ -381,6 +381,7 @@ impl App {
             sidebar_width_source,
             sidebar_section_split,
             collapsed_space_keys,
+            recent_workspace_ids,
         ) = if no_session {
             (
                 Vec::new(),
@@ -390,6 +391,7 @@ impl App {
                 state::SidebarWidthSource::ConfigDefault,
                 0.5_f32,
                 std::collections::HashSet::new(),
+                Vec::new(),
             )
         } else if let Some(snap) = crate::persist::load() {
             let history = config
@@ -426,6 +428,7 @@ impl App {
                     },
                     snap.sidebar_section_split.unwrap_or(0.5),
                     snap.collapsed_space_keys,
+                    snap.recent_workspace_ids,
                 )
             } else {
                 crate::logging::session_restored(ws.len(), "ok");
@@ -443,6 +446,7 @@ impl App {
                     },
                     snap.sidebar_section_split.unwrap_or(0.5),
                     snap.collapsed_space_keys,
+                    snap.recent_workspace_ids,
                 )
             }
         } else {
@@ -454,6 +458,7 @@ impl App {
                 state::SidebarWidthSource::ConfigDefault,
                 0.5_f32,
                 std::collections::HashSet::new(),
+                Vec::new(),
             )
         };
 
@@ -508,7 +513,7 @@ impl App {
         let (theme_palette, theme_name) = resolve_effective_theme(&theme_runtime, None);
 
         let mut state = AppState {
-            recent_workspace_ids: Vec::new(),
+            recent_workspace_ids,
             recent_workspace: None,
             terminals: std::collections::HashMap::new(),
             direct_attach_resize_locks: std::collections::HashSet::new(),
@@ -811,6 +816,10 @@ impl App {
         app.state.selected = snapshot
             .selected
             .min(app.state.workspaces.len().saturating_sub(1));
+        app.state.recent_workspace_ids = snapshot.recent_workspace_ids.clone();
+        if !app.state.recent_workspace_ids.is_empty() {
+            app.state.mark_session_dirty();
+        }
         if let Some(width) = snapshot.sidebar_width {
             app.state.sidebar_width = width;
             app.state.sidebar_width_source = state::SidebarWidthSource::Persisted;

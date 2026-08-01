@@ -26,6 +26,8 @@ pub struct SessionSnapshot {
     pub sidebar_section_split: Option<f32>,
     #[serde(default)]
     pub collapsed_space_keys: std::collections::HashSet<String>,
+    #[serde(default)]
+    pub recent_workspace_ids: Vec<crate::app::state::WorkspaceTabTarget>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -182,6 +184,8 @@ struct RawSessionSnapshot {
     sidebar_section_split: Option<f32>,
     #[serde(default)]
     collapsed_space_keys: std::collections::HashSet<String>,
+    #[serde(default)]
+    recent_workspace_ids: Vec<crate::app::state::WorkspaceTabTarget>,
 }
 
 fn migrate_snapshot(raw: RawSessionSnapshot) -> Result<SessionSnapshot, String> {
@@ -197,6 +201,7 @@ fn migrate_snapshot(raw: RawSessionSnapshot) -> Result<SessionSnapshot, String> 
         sidebar_width: raw.sidebar_width,
         sidebar_section_split: raw.sidebar_section_split,
         collapsed_space_keys: raw.collapsed_space_keys,
+        recent_workspace_ids: raw.recent_workspace_ids,
     })
 }
 
@@ -259,6 +264,7 @@ pub fn capture(
     sidebar_width: u16,
     sidebar_section_split: f32,
     collapsed_space_keys: std::collections::HashSet<String>,
+    recent_workspace_ids: Vec<crate::app::state::WorkspaceTabTarget>,
 ) -> SessionSnapshot {
     SessionSnapshot {
         version: SNAPSHOT_VERSION,
@@ -271,6 +277,7 @@ pub fn capture(
         sidebar_width: Some(sidebar_width),
         sidebar_section_split: Some(sidebar_section_split),
         collapsed_space_keys,
+        recent_workspace_ids,
     }
 }
 
@@ -539,6 +546,7 @@ mod tests {
             state.sidebar_width,
             state.sidebar_section_split,
             state.collapsed_space_keys.clone(),
+            state.recent_workspace_ids.clone(),
         )
     }
 
@@ -566,6 +574,7 @@ mod tests {
             sidebar_width: Some(26),
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),
+            recent_workspace_ids: Vec::new(),
         };
         let json = serde_json::to_string(&snap).unwrap();
         let restored = parse_snapshot(&json).unwrap();
@@ -573,6 +582,43 @@ mod tests {
         assert_eq!(restored.active, None);
         assert_eq!(restored.sidebar_width, Some(26));
         assert_eq!(restored.sidebar_section_split, Some(0.5));
+    }
+
+    #[test]
+    fn round_trip_recent_workspace_history() {
+        let mut snap = SessionSnapshot {
+            version: SNAPSHOT_VERSION,
+            workspaces: vec![],
+            active: None,
+            selected: 0,
+            sidebar_width: None,
+            sidebar_section_split: None,
+            collapsed_space_keys: std::collections::HashSet::new(),
+            recent_workspace_ids: Vec::new(),
+        };
+        snap.recent_workspace_ids = vec![
+            crate::app::state::WorkspaceTabTarget {
+                workspace_id: "workspace-a".into(),
+                tab_number: 2,
+            },
+            crate::app::state::WorkspaceTabTarget {
+                workspace_id: "workspace-a".into(),
+                tab_number: 1,
+            },
+        ];
+
+        let json = serde_json::to_string(&snap).unwrap();
+        let restored = parse_snapshot(&json).unwrap();
+
+        assert_eq!(restored.recent_workspace_ids, snap.recent_workspace_ids);
+    }
+
+    #[test]
+    fn missing_recent_workspace_history_defaults_empty() {
+        let restored =
+            parse_snapshot(r#"{"version":1,"workspaces":[],"active":null,"selected":0}"#).unwrap();
+
+        assert!(restored.recent_workspace_ids.is_empty());
     }
 
     #[test]
@@ -651,6 +697,7 @@ mod tests {
             sidebar_width: Some(26),
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),
+            recent_workspace_ids: Vec::new(),
             version: SNAPSHOT_VERSION,
         };
 
@@ -1206,6 +1253,7 @@ mod tests {
             sidebar_width: Some(26),
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),
+            recent_workspace_ids: Vec::new(),
         };
 
         let json = serde_json::to_string(&snap).unwrap();

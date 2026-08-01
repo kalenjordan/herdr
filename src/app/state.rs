@@ -782,7 +782,7 @@ pub enum WorkspaceSwitcherKind {
     DoneOrBlocked,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct WorkspaceTabTarget {
     pub workspace_id: String,
     pub tab_number: usize,

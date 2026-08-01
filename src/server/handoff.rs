@@ -38,6 +38,9 @@ pub(crate) struct HandoffManifest {
     pub expected_version: Option<String>,
     pub expected_protocol: Option<u32>,
     pub snapshot: crate::persist::SessionSnapshot,
+    // Compatibility with builds that briefly transferred this state outside the snapshot.
+    #[serde(default)]
+    pub recent_workspace_ids: Vec<crate::app::state::WorkspaceTabTarget>,
     pub panes: Vec<crate::handoff_runtime::HandoffRuntimeState>,
 }
 
@@ -305,6 +308,7 @@ pub(crate) fn manifest_for(
     expected_protocol: Option<u32>,
     expected_version: Option<String>,
 ) -> HandoffManifest {
+    let recent_workspace_ids = snapshot.recent_workspace_ids.clone();
     HandoffManifest {
         version: HANDOFF_VERSION,
         source_version: crate::build_info::version(),
@@ -312,7 +316,15 @@ pub(crate) fn manifest_for(
         expected_version,
         expected_protocol,
         snapshot,
+        recent_workspace_ids,
         panes,
+    }
+}
+
+#[cfg(unix)]
+pub(crate) fn normalize_recent_workspace_history(manifest: &mut HandoffManifest) {
+    if manifest.snapshot.recent_workspace_ids.is_empty() {
+        manifest.snapshot.recent_workspace_ids = std::mem::take(&mut manifest.recent_workspace_ids);
     }
 }
 
@@ -463,4 +475,34 @@ fn recv_fds(stream: &UnixStream, expected: usize) -> io::Result<Vec<RawFd>> {
 #[cfg(unix)]
 pub(crate) fn log_import_result(panes: usize) {
     info!(panes, "handoff import ready");
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_handoff_recent_history_populates_snapshot() {
+        let recent_workspace_ids = vec![crate::app::state::WorkspaceTabTarget {
+            workspace_id: "workspace-a".into(),
+            tab_number: 2,
+        }];
+        let snapshot = crate::persist::SessionSnapshot {
+            version: 1,
+            workspaces: Vec::new(),
+            active: None,
+            selected: 0,
+            sidebar_width: None,
+            sidebar_section_split: None,
+            collapsed_space_keys: std::collections::HashSet::new(),
+            recent_workspace_ids: Vec::new(),
+        };
+        let mut manifest = manifest_for(snapshot, Vec::new(), None, None);
+        manifest.recent_workspace_ids = recent_workspace_ids.clone();
+
+        normalize_recent_workspace_history(&mut manifest);
+
+        assert_eq!(manifest.snapshot.recent_workspace_ids, recent_workspace_ids);
+        assert!(manifest.recent_workspace_ids.is_empty());
+    }
 }

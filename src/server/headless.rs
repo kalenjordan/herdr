@@ -955,6 +955,7 @@ impl HeadlessServer {
             self.app.state.sidebar_width,
             self.app.state.sidebar_section_split,
             self.app.state.collapsed_space_keys.clone(),
+            self.app.state.recent_workspace_ids.clone(),
         );
 
         let mut handoff_entries = Vec::new();
@@ -4071,6 +4072,7 @@ fn run_handoff_import_server(socket_path: &Path, token: &str) -> io::Result<()> 
     let loaded_config = config::Config::load();
     let mut received = crate::server::handoff::receive(socket_path, token)?;
     crate::server::handoff::log_import_result(received.manifest.panes.len());
+    crate::server::handoff::normalize_recent_workspace_history(&mut received.manifest);
 
     let (api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
     let event_hub = api::EventHub::default();
