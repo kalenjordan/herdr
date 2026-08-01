@@ -23,6 +23,8 @@ pub struct SessionSnapshot {
     #[serde(default)]
     pub sidebar_width: Option<u16>,
     #[serde(default)]
+    pub sidebar_collapsed: bool,
+    #[serde(default)]
     pub sidebar_section_split: Option<f32>,
     #[serde(default)]
     pub collapsed_space_keys: std::collections::HashSet<String>,
@@ -181,6 +183,8 @@ struct RawSessionSnapshot {
     #[serde(default)]
     sidebar_width: Option<u16>,
     #[serde(default)]
+    sidebar_collapsed: bool,
+    #[serde(default)]
     sidebar_section_split: Option<f32>,
     #[serde(default)]
     collapsed_space_keys: std::collections::HashSet<String>,
@@ -199,6 +203,7 @@ fn migrate_snapshot(raw: RawSessionSnapshot) -> Result<SessionSnapshot, String> 
         active: raw.active,
         selected: raw.selected,
         sidebar_width: raw.sidebar_width,
+        sidebar_collapsed: raw.sidebar_collapsed,
         sidebar_section_split: raw.sidebar_section_split,
         collapsed_space_keys: raw.collapsed_space_keys,
         recent_workspace_ids: raw.recent_workspace_ids,
@@ -262,6 +267,7 @@ pub fn capture(
     active: Option<usize>,
     selected: usize,
     sidebar_width: u16,
+    sidebar_collapsed: bool,
     sidebar_section_split: f32,
     collapsed_space_keys: std::collections::HashSet<String>,
     recent_workspace_ids: Vec<crate::app::state::WorkspaceTabTarget>,
@@ -275,6 +281,7 @@ pub fn capture(
         active,
         selected,
         sidebar_width: Some(sidebar_width),
+        sidebar_collapsed,
         sidebar_section_split: Some(sidebar_section_split),
         collapsed_space_keys,
         recent_workspace_ids,
@@ -544,6 +551,7 @@ mod tests {
             state.active,
             state.selected,
             state.sidebar_width,
+            state.sidebar_collapsed,
             state.sidebar_section_split,
             state.collapsed_space_keys.clone(),
             state.recent_workspace_ids.clone(),
@@ -572,6 +580,7 @@ mod tests {
             active: None,
             selected: 0,
             sidebar_width: Some(26),
+            sidebar_collapsed: false,
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),
             recent_workspace_ids: Vec::new(),
@@ -592,6 +601,7 @@ mod tests {
             active: None,
             selected: 0,
             sidebar_width: None,
+            sidebar_collapsed: false,
             sidebar_section_split: None,
             collapsed_space_keys: std::collections::HashSet::new(),
             recent_workspace_ids: Vec::new(),
@@ -614,11 +624,24 @@ mod tests {
     }
 
     #[test]
+    fn round_trip_sidebar_collapsed_state() {
+        let mut state = AppState::test_new();
+        state.sidebar_collapsed = true;
+
+        let snapshot = capture_from_state(&state);
+        let json = serde_json::to_string(&snapshot).unwrap();
+        let restored = parse_snapshot(&json).unwrap();
+
+        assert!(restored.sidebar_collapsed);
+    }
+
+    #[test]
     fn missing_recent_workspace_history_defaults_empty() {
         let restored =
             parse_snapshot(r#"{"version":1,"workspaces":[],"active":null,"selected":0}"#).unwrap();
 
         assert!(restored.recent_workspace_ids.is_empty());
+        assert!(!restored.sidebar_collapsed);
     }
 
     #[test]
@@ -695,6 +718,7 @@ mod tests {
             active: Some(0),
             selected: 0,
             sidebar_width: Some(26),
+            sidebar_collapsed: false,
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),
             recent_workspace_ids: Vec::new(),
@@ -1251,6 +1275,7 @@ mod tests {
             active: Some(0),
             selected: 0,
             sidebar_width: Some(26),
+            sidebar_collapsed: false,
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),
             recent_workspace_ids: Vec::new(),

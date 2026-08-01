@@ -953,6 +953,7 @@ impl HeadlessServer {
             self.app.state.active,
             self.app.state.selected,
             self.app.state.sidebar_width,
+            self.app.state.sidebar_collapsed,
             self.app.state.sidebar_section_split,
             self.app.state.collapsed_space_keys.clone(),
             self.app.state.recent_workspace_ids.clone(),

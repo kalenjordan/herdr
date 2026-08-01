@@ -389,7 +389,7 @@ impl App {
             }
             NavigateAction::EnterResizeMode => self.state.mode = Mode::Resize,
             NavigateAction::ToggleSidebar => {
-                self.state.sidebar_collapsed = !self.state.sidebar_collapsed;
+                self.state.toggle_sidebar();
                 leave_navigate_mode(&mut self.state);
             }
             NavigateAction::CyclePaneNext => {
@@ -1699,7 +1699,7 @@ pub(super) fn execute_navigate_action_in_context(
         }
         NavigateAction::EnterResizeMode => state.mode = Mode::Resize,
         NavigateAction::ToggleSidebar => {
-            state.sidebar_collapsed = !state.sidebar_collapsed;
+            state.toggle_sidebar();
             leave_navigate_mode(state);
         }
         NavigateAction::CyclePaneNext => {
@@ -2155,6 +2155,7 @@ mod tests {
         );
 
         assert!(state.sidebar_collapsed);
+        assert!(state.session_dirty);
         assert_eq!(state.mode, Mode::Terminal);
     }
 

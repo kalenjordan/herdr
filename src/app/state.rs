@@ -1545,6 +1545,11 @@ impl AppState {
         self.session_dirty = true;
     }
 
+    pub(crate) fn toggle_sidebar(&mut self) {
+        self.sidebar_collapsed = !self.sidebar_collapsed;
+        self.mark_session_dirty();
+    }
+
     pub(crate) fn remove_alias_shadowed_by_new_pane(&mut self, pane_id: PaneId) {
         self.pane_id_aliases.remove(&pane_id.raw());
     }

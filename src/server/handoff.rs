@@ -493,6 +493,7 @@ mod tests {
             active: None,
             selected: 0,
             sidebar_width: None,
+            sidebar_collapsed: false,
             sidebar_section_split: None,
             collapsed_space_keys: std::collections::HashSet::new(),
             recent_workspace_ids: Vec::new(),

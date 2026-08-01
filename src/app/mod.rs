@@ -379,6 +379,7 @@ impl App {
             selected,
             sidebar_width,
             sidebar_width_source,
+            sidebar_collapsed,
             sidebar_section_split,
             collapsed_space_keys,
             recent_workspace_ids,
@@ -389,6 +390,7 @@ impl App {
                 0,
                 config.ui.sidebar_width,
                 state::SidebarWidthSource::ConfigDefault,
+                false,
                 0.5_f32,
                 std::collections::HashSet::new(),
                 Vec::new(),
@@ -426,6 +428,7 @@ impl App {
                     } else {
                         state::SidebarWidthSource::ConfigDefault
                     },
+                    snap.sidebar_collapsed,
                     snap.sidebar_section_split.unwrap_or(0.5),
                     snap.collapsed_space_keys,
                     snap.recent_workspace_ids,
@@ -444,6 +447,7 @@ impl App {
                     } else {
                         state::SidebarWidthSource::ConfigDefault
                     },
+                    snap.sidebar_collapsed,
                     snap.sidebar_section_split.unwrap_or(0.5),
                     snap.collapsed_space_keys,
                     snap.recent_workspace_ids,
@@ -456,6 +460,7 @@ impl App {
                 0,
                 config.ui.sidebar_width,
                 state::SidebarWidthSource::ConfigDefault,
+                false,
                 0.5_f32,
                 std::collections::HashSet::new(),
                 Vec::new(),
@@ -609,7 +614,7 @@ impl App {
             mobile_width_threshold: config.ui.mobile_width_threshold,
             sidebar_width_source,
             sidebar_width_auto: false,
-            sidebar_collapsed: false,
+            sidebar_collapsed,
             sidebar_collapsed_mode: config.ui.sidebar_collapsed_mode,
             sidebar_section_split,
             agent_panel_sort,
@@ -824,6 +829,7 @@ impl App {
             app.state.sidebar_width = width;
             app.state.sidebar_width_source = state::SidebarWidthSource::Persisted;
         }
+        app.state.sidebar_collapsed = snapshot.sidebar_collapsed;
         if let Some(split) = snapshot.sidebar_section_split {
             app.state.sidebar_section_split = split;
         }
