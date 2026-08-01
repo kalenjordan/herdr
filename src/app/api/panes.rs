@@ -1471,6 +1471,12 @@ impl App {
                 return encode_error(id, "pane_send_failed", err.to_string());
             }
         }
+        if params.text == "/clear"
+            && params.keys.len() == 1
+            && params.keys[0].eq_ignore_ascii_case("enter")
+        {
+            self.state.suppress_codex_context_for_clear(ws_idx, pane_id);
+        }
 
         encode_success(id, ResponseResult::Ok {})
     }
@@ -2081,6 +2087,67 @@ mod tests {
         assert_eq!(success.result, ResponseResult::Ok {});
         assert_eq!(rx.try_recv().unwrap(), bytes::Bytes::from(vec![0x0a]));
         assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn api_pane_run_clear_suppresses_old_codex_context() {
+        let (mut app, pane_id, mut rx) = app_with_send_key_runtime(2);
+        app.state.active = Some(0);
+        let internal_pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = app.state.terminal_id_for_pane(0, internal_pane_id).unwrap();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_persisted_agent_session(crate::agent_resume::PersistedAgentSession {
+                source: "herdr:codex".into(),
+                agent: "codex".into(),
+                session_ref: crate::agent_resume::AgentSessionRef::id("old-session").unwrap(),
+            });
+        app.state.context_used_percent = Some(64);
+
+        let response = app.handle_api_request(crate::api::schema::Request {
+            id: "req".into(),
+            method: crate::api::schema::Method::PaneSendInput(PaneSendInputParams {
+                pane_id,
+                text: "/clear".into(),
+                keys: vec!["Enter".into()],
+            }),
+        });
+
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(success.result, ResponseResult::Ok {});
+        assert_eq!(rx.try_recv().unwrap(), bytes::Bytes::from_static(b"/clear"));
+        assert_eq!(rx.try_recv().unwrap(), bytes::Bytes::from_static(b"\r"));
+        assert_eq!(app.state.context_used_percent, None);
+        assert_eq!(
+            app.state
+                .suppressed_codex_context_sessions
+                .get(&terminal_id)
+                .map(String::as_str),
+            Some("old-session")
+        );
+    }
+
+    #[tokio::test]
+    async fn api_pane_send_input_clear_without_enter_keeps_codex_context() {
+        let (mut app, pane_id, mut rx) = app_with_send_key_runtime(1);
+        app.state.context_used_percent = Some(64);
+
+        let response = app.handle_api_request(crate::api::schema::Request {
+            id: "req".into(),
+            method: crate::api::schema::Method::PaneSendInput(PaneSendInputParams {
+                pane_id,
+                text: "/clear".into(),
+                keys: Vec::new(),
+            }),
+        });
+
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(success.result, ResponseResult::Ok {});
+        assert_eq!(rx.try_recv().unwrap(), bytes::Bytes::from_static(b"/clear"));
+        assert_eq!(app.state.context_used_percent, Some(64));
+        assert!(app.state.suppressed_codex_context_sessions.is_empty());
     }
 
     #[tokio::test]

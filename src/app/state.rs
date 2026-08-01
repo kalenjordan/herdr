@@ -1516,6 +1516,31 @@ pub struct AppState {
 }
 
 impl AppState {
+    pub(crate) fn suppress_codex_context_for_clear(&mut self, ws_idx: usize, pane_id: PaneId) {
+        let Some(terminal_id) = self.terminal_id_for_pane(ws_idx, pane_id) else {
+            return;
+        };
+        let Some(session_id) = self
+            .terminals
+            .get(&terminal_id)
+            .and_then(|terminal| terminal.codex_session_id())
+            .map(str::to_owned)
+        else {
+            return;
+        };
+        self.suppressed_codex_context_sessions
+            .insert(terminal_id, session_id);
+        if self.active == Some(ws_idx)
+            && self
+                .workspaces
+                .get(ws_idx)
+                .and_then(|workspace| workspace.focused_pane_id())
+                == Some(pane_id)
+        {
+            self.context_used_percent = None;
+        }
+    }
+
     pub(crate) fn mark_session_dirty(&mut self) {
         self.session_dirty = true;
     }

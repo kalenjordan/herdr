@@ -80,22 +80,7 @@ impl App {
         if command != "/clear" {
             return;
         }
-        let Some(terminal_id) = self.state.terminal_id_for_pane(ws_idx, pane_id) else {
-            return;
-        };
-        let Some(session_id) = self
-            .state
-            .terminals
-            .get(&terminal_id)
-            .and_then(|terminal| terminal.codex_session_id())
-            .map(str::to_owned)
-        else {
-            return;
-        };
-        self.state
-            .suppressed_codex_context_sessions
-            .insert(terminal_id, session_id);
-        self.state.context_used_percent = None;
+        self.state.suppress_codex_context_for_clear(ws_idx, pane_id);
     }
 
     pub(crate) fn observe_pending_pane_paste(
