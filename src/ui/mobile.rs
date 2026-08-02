@@ -17,7 +17,7 @@ use crate::app::state::{Palette, ToastKind, ToastNotification};
 use crate::app::AppState;
 use crate::detect::AgentState;
 use crate::layout::PaneId;
-use crate::terminal::TerminalRuntimeRegistry;
+use crate::terminal::{TerminalId, TerminalRuntimeRegistry, TerminalState};
 
 const SWITCH_BUTTON_WIDTH: u16 = 10;
 
@@ -328,7 +328,7 @@ fn render_header_status(
     } else {
         state_dot(state, seen, p)
     };
-    let tab_label = mobile_tab_status(ws);
+    let tab_label = mobile_tab_status(ws, &app.terminals, terminal_runtimes);
     let row1 = Rect::new(area.x, area.y, area.width, 1);
     let tab_w = display_width_u16(&tab_label)
         .saturating_add(1)
@@ -368,9 +368,13 @@ fn render_header_status(
     }
 }
 
-fn mobile_tab_status(ws: &crate::workspace::Workspace) -> String {
+fn mobile_tab_status(
+    ws: &crate::workspace::Workspace,
+    terminals: &std::collections::HashMap<TerminalId, TerminalState>,
+    terminal_runtimes: &TerminalRuntimeRegistry,
+) -> String {
     let tab_label = ws
-        .tab_display_name(ws.active_tab)
+        .tab_display_name_from(ws.active_tab, terminals, terminal_runtimes)
         .unwrap_or_else(|| (ws.active_tab + 1).to_string());
     if ws.tabs.len() <= 1 {
         format!("tab {tab_label}")
@@ -621,7 +625,7 @@ fn render_mobile_switcher_content(
         let detail = format!(
             "{detail_prefix}{} · {}",
             ws.branch().unwrap_or_else(|| "shell".into()),
-            mobile_tab_status(ws)
+            mobile_tab_status(ws, &app.terminals, terminal_runtimes)
         );
         render_two_line_item(
             frame,
@@ -1339,7 +1343,14 @@ mod tests {
         assert!(workspace.close_tab(removed_tab));
         workspace.active_tab = 1;
 
-        assert_eq!(mobile_tab_status(&workspace), "tab 2 · 2/2");
+        assert_eq!(
+            mobile_tab_status(
+                &workspace,
+                &std::collections::HashMap::new(),
+                &TerminalRuntimeRegistry::new(),
+            ),
+            "tab 2 · 2/2"
+        );
     }
 
     #[test]

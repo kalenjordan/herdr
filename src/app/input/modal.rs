@@ -1794,7 +1794,7 @@ mod tests {
     }
 
     #[test]
-    fn closing_first_auto_tab_compacts_remaining_auto_tab_label_and_next_prompt() {
+    fn closing_first_auto_tab_promotes_workspace_label_and_compacts_next_prompt() {
         let mut state = state_with_workspaces(&["test"]);
         open_new_tab_dialog(&mut state);
         handle_rename_key(
@@ -1811,7 +1811,7 @@ mod tests {
 
         assert_eq!(
             state.workspaces[0].tab_display_name(0).as_deref(),
-            Some("1")
+            Some("test")
         );
         assert!(state.workspaces[0].tabs[0].custom_name.is_none());
 

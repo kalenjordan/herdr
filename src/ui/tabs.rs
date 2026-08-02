@@ -612,9 +612,11 @@ mod tests {
             .unwrap();
 
         let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
-        assert!(row.contains(" 1 Z"), "tab row: {row:?}");
         assert!(row.contains(" test Z"), "tab row: {row:?}");
-        assert_eq!(app.workspaces[0].tab_display_name(0).as_deref(), Some("1"));
+        assert_eq!(
+            app.workspaces[0].tab_display_name(0).as_deref(),
+            Some("test")
+        );
         assert_eq!(
             app.workspaces[0].tab_display_name(custom_tab).as_deref(),
             Some("test")
@@ -641,7 +643,7 @@ mod tests {
             .unwrap();
 
         let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
-        assert!(row.starts_with(" 1       ●3"), "tab row: {row:?}");
+        assert!(row.starts_with(" test    ●3"), "tab row: {row:?}");
     }
 
     #[test]
@@ -696,7 +698,7 @@ mod tests {
             .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
             .unwrap();
         let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
-        assert!(row.starts_with(" 1       31%"), "tab row: {row:?}");
+        assert!(row.starts_with(" test    31%"), "tab row: {row:?}");
     }
 
     #[test]
@@ -732,7 +734,7 @@ mod tests {
             .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
             .unwrap();
         let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
-        assert!(row.starts_with(" 1       31% ●3"), "tab row: {row:?}");
+        assert!(row.starts_with(" test    31% ●3"), "tab row: {row:?}");
     }
 
     #[test]

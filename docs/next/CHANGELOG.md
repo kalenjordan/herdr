@@ -40,6 +40,8 @@
 - Added Japanese and Simplified Chinese website docs.
 
 ### Changed
+
+- The first auto-named tab now immediately uses its workspace name instead of the numeric placeholder `1`.
 - The mobile switcher now starts from an agents-first summary and renders worktrees as a tree, making narrow terminals easier to scan.
 - macOS prefix input-source switching now runs on the foreground client, so non-Latin input sources are restored reliably after prefix mode. (#774, #1016, thanks @ppggff)
 - Nix packaging now uses `xcbuild` instead of custom Apple SDK wrappers for Darwin builds. (#995, thanks @arunoruto)

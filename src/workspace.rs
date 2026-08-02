@@ -435,11 +435,29 @@ impl Workspace {
 
     pub fn tab_display_name(&self, tab_idx: usize) -> Option<String> {
         let tab = self.tabs.get(tab_idx)?;
-        Some(
-            tab.custom_name
-                .clone()
-                .unwrap_or_else(|| (tab_idx + 1).to_string()),
-        )
+        Some(tab.custom_name.clone().unwrap_or_else(|| {
+            if tab_idx == 0 {
+                self.display_name()
+            } else {
+                (tab_idx + 1).to_string()
+            }
+        }))
+    }
+
+    pub fn tab_display_name_from(
+        &self,
+        tab_idx: usize,
+        terminals: &HashMap<TerminalId, TerminalState>,
+        terminal_runtimes: &TerminalRuntimeRegistry,
+    ) -> Option<String> {
+        let tab = self.tabs.get(tab_idx)?;
+        Some(tab.custom_name.clone().unwrap_or_else(|| {
+            if tab_idx == 0 {
+                self.display_name_from(terminals, terminal_runtimes)
+            } else {
+                (tab_idx + 1).to_string()
+            }
+        }))
     }
 
     pub fn switch_tab(&mut self, idx: usize) {
@@ -1596,6 +1614,32 @@ mod tests {
             ws.resolved_identity_cwd_from(&terminals, &terminal_runtimes),
             Some(PathBuf::from("/herdr-test/pion"))
         );
+    }
+
+    #[test]
+    fn first_auto_named_tab_uses_workspace_name() {
+        let mut ws = Workspace::test_new("herdr");
+
+        assert_eq!(ws.tab_display_name(0).as_deref(), Some("herdr"));
+
+        ws.set_custom_name("runtime".into());
+        assert_eq!(ws.tab_display_name(0).as_deref(), Some("runtime"));
+    }
+
+    #[test]
+    fn explicit_tab_name_overrides_first_tab_workspace_name() {
+        let mut ws = Workspace::test_new("herdr");
+        ws.tabs[0].set_custom_name("task".into());
+
+        assert_eq!(ws.tab_display_name(0).as_deref(), Some("task"));
+    }
+
+    #[test]
+    fn later_auto_named_tabs_keep_numeric_names() {
+        let mut ws = Workspace::test_new("herdr");
+        let tab_idx = ws.test_add_tab(None);
+
+        assert_eq!(ws.tab_display_name(tab_idx).as_deref(), Some("2"));
     }
 
     #[test]
