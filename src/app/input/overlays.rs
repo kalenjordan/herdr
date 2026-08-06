@@ -123,6 +123,36 @@ impl App {
             return true;
         }
 
+        if self.state.mode == Mode::ProjectPicker {
+            match mouse.kind {
+                MouseEventKind::Down(MouseButton::Left) => {
+                    let body = self.state.project_picker_body_rect();
+                    if mouse.column >= body.x
+                        && mouse.column < body.x + body.width
+                        && mouse.row >= body.y
+                        && mouse.row < body.y + body.height
+                    {
+                        let index = self.state.project_picker.scroll
+                            + mouse.row.saturating_sub(body.y) as usize;
+                        if index < self.state.project_picker_visible_entries().len() {
+                            self.state.project_picker.selected = index;
+                            self.accept_project_picker_selection();
+                        }
+                    } else if !rect_contains(
+                        self.state.project_picker_popup_rect(),
+                        mouse.column,
+                        mouse.row,
+                    ) {
+                        self.state.mode = Mode::Terminal;
+                    }
+                }
+                MouseEventKind::ScrollUp => self.move_project_picker_selection(-3),
+                MouseEventKind::ScrollDown => self.move_project_picker_selection(3),
+                _ => {}
+            }
+            return true;
+        }
+
         if self.state.mode == Mode::Navigator {
             match mouse.kind {
                 MouseEventKind::Moved => {
@@ -272,6 +302,53 @@ impl AppState {
             area.y + margin_y,
             width.max(4),
             height.max(4),
+        )
+    }
+
+    pub(crate) fn project_picker_popup_rect(&self) -> Rect {
+        let area = self.onboarding_full_area();
+        let width = area.width.saturating_sub(4).clamp(4, 72);
+        let desired_height = self
+            .project_picker_visible_entries()
+            .len()
+            .saturating_add(4) as u16;
+        let height = desired_height.clamp(8, 20).min(area.height.max(1));
+        Rect::new(
+            area.x + area.width.saturating_sub(width) / 2,
+            area.y + area.height.saturating_sub(height) / 3,
+            width,
+            height,
+        )
+    }
+
+    pub(crate) fn project_picker_inner_rect(&self) -> Rect {
+        Block::default()
+            .borders(Borders::ALL)
+            .inner(self.project_picker_popup_rect())
+    }
+
+    pub(crate) fn project_picker_search_rect(&self) -> Rect {
+        let inner = self.project_picker_inner_rect();
+        Rect::new(inner.x, inner.y, inner.width, inner.height.min(1))
+    }
+
+    pub(crate) fn project_picker_body_rect(&self) -> Rect {
+        let inner = self.project_picker_inner_rect();
+        Rect::new(
+            inner.x,
+            inner.y.saturating_add(2),
+            inner.width,
+            inner.height.saturating_sub(3),
+        )
+    }
+
+    pub(crate) fn project_picker_footer_rect(&self) -> Rect {
+        let inner = self.project_picker_inner_rect();
+        Rect::new(
+            inner.x,
+            inner.y + inner.height.saturating_sub(1),
+            inner.width,
+            inner.height.min(1),
         )
     }
 

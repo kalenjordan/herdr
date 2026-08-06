@@ -9,6 +9,7 @@ const KNOWN_TOP_LEVEL_CONFIG_KEYS: &[&str] = &[
     "experimental",
     "keys",
     "onboarding",
+    "projects",
     "remote",
     "session",
     "terminal",
@@ -226,6 +227,14 @@ fn load_live_config_from_str(content: &str) -> Result<LoadedConfig, Vec<String>>
         &mut diagnostics,
         &mut invalid_sections,
         |section| config.keys = section,
+    );
+    load_live_section(
+        table,
+        "projects",
+        "project picker config",
+        &mut diagnostics,
+        &mut invalid_sections,
+        |section| config.projects = section,
     );
     load_live_section(
         table,

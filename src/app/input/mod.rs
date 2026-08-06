@@ -113,6 +113,7 @@ impl App {
                 Mode::Navigator => {
                     handle_navigator_key(&mut self.state, &self.terminal_runtimes, key_event)
                 }
+                Mode::ProjectPicker => self.handle_project_picker_key(key_event),
                 Mode::RecentWorkspace => handle_recent_workspace_key(&mut self.state, key_event),
                 Mode::Terminal => unreachable!(),
             },
@@ -162,6 +163,12 @@ impl App {
                     return false;
                 }
                 insert_navigator_search_text(&mut self.state, &self.terminal_runtimes, text);
+                true
+            }
+            Mode::ProjectPicker => {
+                self.state.project_picker.query.push_str(text);
+                self.state.project_picker.selected = 0;
+                self.state.project_picker.error = None;
                 true
             }
             Mode::Copy => {

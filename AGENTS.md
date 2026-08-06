@@ -167,6 +167,12 @@ is managed by the dotfiles repository and may invoke
 `~/repos/dotfiles/bin/codex-herdr-tab-name`. Treat that hook as a possible
 source of naming behavior outside Herdr itself.
 
+When investigating Herdr keyboard shortcuts on Kalen's machine, inspect
+`~/repos/dotfiles/ghostty/config.ghostty` as well as Herdr's keybindings.
+Ghostty receives macOS `Cmd-*` shortcuts first and may translate them into
+Herdr prefix sequences. For example, the current `super+k` binding emits
+`Ctrl-B`, `g`, `/` to open Herdr's goto navigator with search focused.
+
 When Kalen says "disable notifications," set
 `HERDR_FOCUS_NOTIFY_ENABLED=0` in
 `~/.config/herdr/plugins/config/herdr-focus-notify/.env`. When Kalen says

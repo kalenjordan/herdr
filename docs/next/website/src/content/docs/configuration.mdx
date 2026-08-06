@@ -150,6 +150,7 @@ The default keymap is prefix-first and avoids direct shortcuts that can steal in
 detach = ["prefix+q", "cmd+shift+x"]
 workspace_picker = "prefix+w"
 goto = "prefix+g"
+project_picker = ""
 new_workspace = "prefix+shift+n"
 new_worktree = "prefix+shift+g"
 rename_workspace = "prefix+shift+w"
@@ -206,6 +207,14 @@ next_tab = ["prefix+n", "ctrl+alt+]"]
 `recent_workspace` opens a most-recently-used workspace overlay. Press the shortcut again while holding Command to cycle, then release Command to switch. `esc` cancels and `enter` switches immediately for terminals that do not report modifier release.
 
 `done_or_blocked_workspace` opens the same switcher filtered to tabs containing a done or blocked agent, ordered oldest-waiting first. Press Command-D again to cycle, then release Command to switch.
+
+`project_picker` opens a typeahead containing open workspaces and repositories found under the configured project directories. Selecting an open workspace focuses it. Selecting an unopened repository creates a workspace there and starts the configured command.
+
+```toml
+[projects]
+directories = ["~/repos"]
+command = "codex"
+```
 
 `remote_image_paste` is only active in `herdr --remote`. It is the local-client shortcut that sends a local clipboard image to the remote pane. Set it to an empty string to disable the raw-key shortcut; remote terminal paste-image signals still work when the outer terminal sends them.
 

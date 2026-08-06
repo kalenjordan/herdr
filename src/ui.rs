@@ -13,6 +13,7 @@ mod mobile;
 mod navigator;
 mod onboarding;
 mod panes;
+mod project_picker;
 mod release_notes;
 mod scrollbar;
 mod settings;
@@ -40,6 +41,7 @@ use self::navigator::render_navigator_overlay;
 pub(crate) use self::onboarding::onboarding_welcome_continue_rect;
 use self::onboarding::render_onboarding_overlay;
 use self::panes::{compute_pane_infos, render_panes, resize_tab_panes};
+use self::project_picker::render_project_picker_overlay;
 pub(crate) use self::release_notes::{
     product_announcement_display_lines, release_notes_close_button_rect,
     release_notes_display_lines, release_notes_wrapped_line_count, PRODUCT_ANNOUNCEMENT_MODAL_SIZE,
@@ -465,6 +467,7 @@ pub fn render_with_runtime_registry(
         Mode::GlobalMenu => render_global_launcher_menu(app, frame),
         Mode::KeybindHelp => render_keybind_help_overlay(app, frame),
         Mode::Navigator => render_navigator_overlay(app, terminal_runtimes, frame),
+        Mode::ProjectPicker => render_project_picker_overlay(app, frame),
         Mode::RecentWorkspace => render_recent_workspace_overlay(app, terminal_runtimes, frame),
         Mode::Terminal => {}
     }

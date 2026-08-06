@@ -766,7 +766,24 @@ pub enum Mode {
     GlobalMenu,
     KeybindHelp,
     Navigator,
+    ProjectPicker,
     RecentWorkspace,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProjectPickerEntry {
+    pub name: String,
+    pub path: std::path::PathBuf,
+    pub workspace_idx: Option<usize>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ProjectPickerState {
+    pub query: String,
+    pub selected: usize,
+    pub scroll: usize,
+    pub entries: Vec<ProjectPickerEntry>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -804,6 +821,7 @@ impl Mode {
             Mode::Prefix
                 | Mode::Navigate
                 | Mode::Navigator
+                | Mode::ProjectPicker
                 | Mode::Copy
                 | Mode::Resize
                 | Mode::ConfirmClose
@@ -1385,6 +1403,9 @@ pub struct AppState {
     pub product_announcement: Option<ProductAnnouncementState>,
     pub keybind_help: KeybindHelpState,
     pub navigator: NavigatorState,
+    pub project_picker: ProjectPickerState,
+    pub project_directories: Vec<std::path::PathBuf>,
+    pub project_command: String,
     pub copy_mode: Option<CopyModeState>,
     pub workspace_scroll: usize,
     pub agent_panel_scroll: usize,
@@ -1776,6 +1797,9 @@ impl AppState {
             product_announcement: None,
             keybind_help: KeybindHelpState { scroll: 0 },
             navigator: NavigatorState::default(),
+            project_picker: ProjectPickerState::default(),
+            project_directories: Vec::new(),
+            project_command: "codex".into(),
             copy_mode: None,
             workspace_scroll: 0,
             agent_panel_scroll: 0,

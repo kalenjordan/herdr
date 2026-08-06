@@ -13,6 +13,7 @@ mod config_io;
 mod creation;
 mod ids;
 mod input;
+mod projects;
 mod runtime;
 mod runtime_mutations;
 mod secrets;
@@ -568,6 +569,14 @@ impl App {
             }),
             keybind_help: state::KeybindHelpState { scroll: 0 },
             navigator: state::NavigatorState::default(),
+            project_picker: state::ProjectPickerState::default(),
+            project_directories: config
+                .projects
+                .directories
+                .iter()
+                .map(|path| crate::worktree::expand_tilde_path(path))
+                .collect(),
+            project_command: config.projects.command.clone(),
             copy_mode: None,
             workspace_scroll: 0,
             agent_panel_scroll: 0,
@@ -1520,6 +1529,16 @@ impl App {
                 crate::worktree::expand_tilde_absolute_path(&config.worktrees.directory);
         }
 
+        if !invalid_section("projects") {
+            self.state.project_directories = config
+                .projects
+                .directories
+                .iter()
+                .map(|path| crate::worktree::expand_tilde_path(path))
+                .collect();
+            self.state.project_command = config.projects.command.clone();
+        }
+
         if !invalid_section("theme") {
             self.state.theme_runtime = theme_runtime_config(config, !invalid_section("ui"));
             self.refresh_effective_app_theme();
@@ -1746,6 +1765,7 @@ impl App {
             Mode::Navigator => {
                 input::handle_navigator_key(&mut self.state, &self.terminal_runtimes, key_event);
             }
+            Mode::ProjectPicker => self.handle_project_picker_key(key_event),
             Mode::RecentWorkspace => {
                 input::handle_recent_workspace_key(&mut self.state, key_event);
             }
