@@ -18,18 +18,7 @@ impl App {
     }
 
     fn discover_project_entries(&self) -> Vec<ProjectPickerEntry> {
-        let mut paths = Vec::new();
-        for directory in &self.state.project_directories {
-            let Ok(children) = std::fs::read_dir(directory) else {
-                continue;
-            };
-            for child in children.flatten() {
-                let path = child.path();
-                if path.is_dir() && (path.join(".git").exists() || is_bare_repository(&path)) {
-                    paths.push(path);
-                }
-            }
-        }
+        let mut paths = configured_project_paths(&self.state.project_directories);
         paths.extend(
             self.state
                 .workspaces
@@ -236,13 +225,42 @@ fn project_name(path: &Path) -> String {
         .unwrap_or_else(|| path.to_string_lossy().into_owned())
 }
 
-fn is_bare_repository(path: &Path) -> bool {
-    path.join("HEAD").is_file() && path.join("objects").is_dir()
+fn configured_project_paths(directories: &[PathBuf]) -> Vec<PathBuf> {
+    directories
+        .iter()
+        .filter_map(|directory| std::fs::read_dir(directory).ok())
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn configured_projects_include_non_git_directories() {
+        let root = std::env::temp_dir().join(format!(
+            "herdr-project-picker-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let plain_directory = root.join("insuranceagents.site");
+        let regular_file = root.join("notes.txt");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&plain_directory).unwrap();
+        std::fs::write(&regular_file, "not a project directory").unwrap();
+
+        let paths = configured_project_paths(std::slice::from_ref(&root));
+
+        assert_eq!(paths, vec![plain_directory]);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn project_filter_matches_name_and_path_case_insensitively() {
