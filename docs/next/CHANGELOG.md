@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Added agent-requested clipboard secret entry with `herdr secret request`, allowing Herdr to update a workspace `.env` file without sending the value through the pane or API response.
+- Added agent-requested clipboard secret entry with `herdr secret request`, allowing Herdr to update a workspace `.env`, `.env.*`, or `.dev.vars` file without sending the value through the pane or API response.
 
 ### Added
 - Added a configurable project picker that searches open workspaces and repositories, focuses existing workspaces, and starts an agent in newly opened repositories.

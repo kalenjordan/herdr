@@ -148,11 +148,12 @@ fn validate_env_file(raw: &str) -> Result<PathBuf, (&'static str, String)> {
     let valid_name = path
         .file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| name == ".env" || name.starts_with(".env."));
+        .is_some_and(|name| name == ".env" || name.starts_with(".env.") || name == ".dev.vars");
     if !valid_components || !valid_name {
         return Err((
             "invalid_secret_file",
-            "file must be a relative .env or .env.* path within the pane workspace".into(),
+            "file must be a relative .env, .env.*, or .dev.vars path within the pane workspace"
+                .into(),
         ));
     }
     Ok(path.to_path_buf())
@@ -341,14 +342,18 @@ mod tests {
     }
 
     #[test]
-    fn env_file_must_be_relative_and_dot_env_named() {
+    fn env_file_must_be_relative_and_supported_env_named() {
         assert_eq!(
             validate_env_file(".env").expect("valid"),
             PathBuf::from(".env")
         );
         assert!(validate_env_file("config/.env.local").is_ok());
+        assert!(validate_env_file(".dev.vars").is_ok());
+        assert!(validate_env_file("config/.dev.vars").is_ok());
         assert!(validate_env_file("../.env").is_err());
+        assert!(validate_env_file("../.dev.vars").is_err());
         assert!(validate_env_file("/tmp/.env").is_err());
+        assert!(validate_env_file(".dev.vars.local").is_err());
         assert!(validate_env_file("secrets.txt").is_err());
     }
 
@@ -422,6 +427,48 @@ mod tests {
                 0o600
             );
         }
+        std::fs::remove_dir_all(directory).expect("cleanup");
+    }
+
+    #[test]
+    fn secret_request_adds_value_to_dev_vars() {
+        let directory = unique_temp_path("request-dev-vars");
+        std::fs::create_dir_all(&directory).expect("directory");
+        let mut workspace = crate::workspace::Workspace::test_new("secret");
+        workspace.identity_cwd = directory.clone();
+        let pane_id = format!("{}:p1", workspace.id);
+        let mut app = test_app();
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        let (respond_to, response_rx) = std::sync::mpsc::channel();
+
+        assert!(!app.handle_secret_request_value(
+            "secret".into(),
+            SecretRequestParams {
+                name: "CLOUDFLARE_API_TOKEN".into(),
+                pane_id,
+                file: ".dev.vars".into(),
+                label: None,
+            },
+            respond_to,
+            "test-value".into(),
+        ));
+
+        let response_text = response_rx.recv().expect("success response");
+        assert!(!response_text.contains("test-value"));
+        let response: SuccessResponse = serde_json::from_str(&response_text).expect("json");
+        assert_eq!(
+            response.result,
+            ResponseResult::SecretRequest {
+                outcome: SecretRequestOutcome::Added,
+                name: "CLOUDFLARE_API_TOKEN".into(),
+                file: ".dev.vars".into(),
+            }
+        );
+        assert_eq!(
+            std::fs::read_to_string(directory.join(".dev.vars")).expect("dev vars"),
+            "CLOUDFLARE_API_TOKEN=test-value\n"
+        );
         std::fs::remove_dir_all(directory).expect("cleanup");
     }
 

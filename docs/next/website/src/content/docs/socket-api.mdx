@@ -313,7 +313,7 @@ Add a secret from the foreground machine's text clipboard:
 ```
 
 Herdr resolves the relative environment file from the target pane's workspace
-root. The file must be named `.env` or `.env.*`. The secret value is read
+root. The file must be named `.env`, `.env.*`, or `.dev.vars`. The secret value is read
 directly from the clipboard and is never included in the request or response.
 It must be non-empty, single-line text. The response reports `added` or
 `replaced`, plus the variable name and relative file path. This prevents the

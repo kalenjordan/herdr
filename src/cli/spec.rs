@@ -271,9 +271,9 @@ fn secret_command() -> Command {
         .about("Request masked secret entry")
         .subcommand(
             Command::new("request")
-                .about("Open a masked prompt and update a workspace .env file")
+                .about("Open a masked prompt and update a workspace environment file")
                 .arg(Arg::new("name").value_name("VARIABLE_NAME").required(true))
-                .arg(option("file", "PATH").help("Relative .env or .env.* file path"))
+                .arg(option("file", "PATH").help("Relative .env, .env.*, or .dev.vars file path"))
                 .arg(option("label", "TEXT").help("Human-readable prompt label")),
         )
 }
