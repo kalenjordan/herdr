@@ -931,11 +931,8 @@ impl TerminalState {
                 "herdr:claude",
                 "claude",
                 Some("clear" | "resume" | "compact")
-            ) | (
-                "herdr:codex",
-                "codex",
-                Some("startup" | "clear" | "resume" | "compact")
-            ) | ("herdr:opencode", "opencode", Some("new"))
+            ) | ("herdr:codex", "codex", Some("startup" | "clear" | "resume"))
+                | ("herdr:opencode", "opencode", Some("new"))
                 | ("herdr:pi", "pi", Some("new" | "resume" | "fork"))
                 | (
                     "herdr:omp",
@@ -3799,7 +3796,7 @@ mod tests {
 
     #[test]
     fn codex_lifecycle_session_ref_replaces_existing_session_ref() {
-        for session_start_source in ["startup", "clear", "resume", "compact"] {
+        for session_start_source in ["startup", "clear", "resume"] {
             let mut terminal = test_terminal();
             terminal
                 .set_agent_session_ref(
@@ -3830,6 +3827,36 @@ mod tests {
                 Some(next_session.as_str())
             );
         }
+    }
+
+    #[test]
+    fn codex_compaction_keeps_existing_thread_session_ref() {
+        let mut terminal = test_terminal();
+        terminal
+            .set_agent_session_ref(
+                "herdr:codex".into(),
+                "codex".into(),
+                crate::agent_resume::AgentSessionRef::id("codex-thread"),
+                Some(20),
+            )
+            .expect("initial thread session should be accepted");
+
+        let mutation = terminal.set_agent_session_ref_for_session_start(
+            "herdr:codex".into(),
+            "codex".into(),
+            crate::agent_resume::AgentSessionRef::id("codex-context-window"),
+            Some(21),
+            Some("compact".into()),
+        );
+
+        assert!(mutation.is_none());
+        assert_eq!(
+            terminal
+                .persisted_agent_session
+                .as_ref()
+                .map(|session| session.session_ref.value.as_str()),
+            Some("codex-thread")
+        );
     }
 
     #[test]
