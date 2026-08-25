@@ -14,6 +14,7 @@
 ### Fixed
 - `herdr --remote` now installs remote helper binaries without routing the binary stream through a multiline `/bin/sh -c` command, fixing installs for non-POSIX login shells such as xonsh. (#1203, thanks @nhumrich)
 - Codex context percentages now clear immediately after `/clear` and no longer reappear from the previous session's transcript while Codex starts the fresh chat.
+- Nested Codex commands no longer replace the owning pane's session identity and hide its context percentage.
 
 ## [0.7.3] - 2026-07-08
 
