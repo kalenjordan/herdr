@@ -495,11 +495,7 @@ fn render_recent_workspace_overlay(
                 .position(|tab| tab.number == target.tab_number)?;
             let workspace = ws.display_name_from(&app.terminals, terminal_runtimes);
             let tab = ws.tab_display_name(tab_idx)?;
-            Some(if ws.tabs.len() > 1 {
-                format!("{workspace} · {tab}")
-            } else {
-                workspace
-            })
+            Some(format!("{workspace} · {tab}"))
         })
         .collect();
     let empty_message = match state.kind {
@@ -1412,6 +1408,7 @@ mod tests {
         current.set_custom_name("Current".into());
         let mut recent = Workspace::test_new("old-name");
         recent.set_custom_name("Renamed workspace".into());
+        recent.tabs[0].set_custom_name("Named tab".into());
         let recent_id = recent.id.clone();
         let recent_tab_number = recent.tabs[0].number;
         app.workspaces = vec![current, recent];
@@ -1437,6 +1434,10 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(text.contains("Renamed workspace"), "screen: {text}");
+        assert!(
+            text.contains("Renamed workspace · Named tab"),
+            "screen: {text}"
+        );
         assert!(!text.contains("old-name"), "screen: {text}");
     }
 
