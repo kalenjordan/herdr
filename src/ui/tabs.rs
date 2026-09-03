@@ -12,6 +12,20 @@ use crate::app::AppState;
 const MIN_TAB_WIDTH: u16 = 8;
 const NEW_TAB_WIDTH: u16 = 3;
 const TAB_SCROLL_BUTTON_WIDTH: u16 = 3;
+
+fn workspace_label_width(ws: &crate::workspace::Workspace) -> u16 {
+    display_width_u16(&ws.display_name()).saturating_add(2)
+}
+
+fn workspace_label_rect(ws: &crate::workspace::Workspace, area: Rect) -> Rect {
+    Rect::new(
+        area.x,
+        area.y,
+        workspace_label_width(ws).min(area.width),
+        area.height,
+    )
+}
+
 #[cfg(test)]
 pub(crate) fn tab_content_rect(ws: &crate::workspace::Workspace, area: Rect) -> Rect {
     tab_content_rect_with_status(ws, &[], None, area)
@@ -28,10 +42,15 @@ pub(crate) fn tab_content_rect_with_status(
         .map(|label| display_width_u16(label).saturating_add(2))
         .sum::<u16>()
         .min(area.width);
+    let label_width = workspace_label_width(ws)
+        .saturating_add(1)
+        .min(area.width.saturating_sub(reserved));
     Rect::new(
-        area.x,
+        area.x.saturating_add(label_width),
         area.y,
-        area.width.saturating_sub(reserved),
+        area.width
+            .saturating_sub(reserved)
+            .saturating_sub(label_width),
         area.height,
     )
 }
@@ -161,7 +180,9 @@ fn tab_width(ws: &crate::workspace::Workspace, tab_idx: usize) -> u16 {
 
 fn tab_chrome_label(ws: &crate::workspace::Workspace, tab_idx: usize) -> String {
     let name = ws
-        .tab_display_name(tab_idx)
+        .tabs
+        .get(tab_idx)
+        .and_then(|tab| tab.custom_name.clone())
         .unwrap_or_else(|| (tab_idx + 1).to_string());
     if ws.tabs.get(tab_idx).is_some_and(|tab| tab.zoomed) {
         format!("{name} Z")
@@ -395,6 +416,15 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
         area,
     );
 
+    let workspace_label_rect = workspace_label_rect(ws, area);
+    if workspace_label_rect.width > 0 {
+        frame.render_widget(
+            Paragraph::new(format!(" {} ", ws.display_name()))
+                .style(Style::default().fg(panel_contrast_fg(p)).bg(p.teal)),
+            workspace_label_rect,
+        );
+    }
+
     let status_rect = status_rect(ws, &app.plugin_status_items, area);
     if status_rect.width > 0 {
         let mut spans = app
@@ -602,7 +632,8 @@ mod tests {
         app.workspaces = vec![ws];
         app.active = Some(0);
         app.view.tab_bar_rect = Rect::new(0, 0, 30, 1);
-        let view = compute_tab_bar_view(&app.workspaces[0], app.view.tab_bar_rect, 0, true, false);
+        let tab_area = tab_content_rect(&app.workspaces[0], app.view.tab_bar_rect);
+        let view = compute_tab_bar_view(&app.workspaces[0], tab_area, 0, true, false);
         app.view.tab_hit_areas = view.tab_hit_areas;
 
         let backend = TestBackend::new(30, 1);
@@ -612,7 +643,11 @@ mod tests {
             .unwrap();
 
         let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
+        assert!(row.starts_with(" test   1 Z"), "tab row: {row:?}");
         assert!(row.contains(" test Z"), "tab row: {row:?}");
+        let workspace_style = terminal.backend().buffer()[(0, 0)].style();
+        assert_eq!(workspace_style.fg, Some(panel_contrast_fg(&app.palette)));
+        assert_eq!(workspace_style.bg, Some(app.palette.teal));
         assert_eq!(
             app.workspaces[0].tab_display_name(0).as_deref(),
             Some("test")
@@ -635,7 +670,7 @@ mod tests {
         let view = compute_tab_bar_view(&app.workspaces[0], tab_area, 0, true, false);
         app.view.tab_hit_areas = view.tab_hit_areas;
 
-        assert_eq!(tab_area, Rect::new(0, 0, 26, 1));
+        assert_eq!(tab_area, Rect::new(7, 0, 19, 1));
         let backend = TestBackend::new(30, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
@@ -643,7 +678,7 @@ mod tests {
             .unwrap();
 
         let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
-        assert!(row.starts_with(" test    ●3"), "tab row: {row:?}");
+        assert!(row.starts_with(" test   1       ●3"), "tab row: {row:?}");
     }
 
     #[test]
@@ -665,7 +700,7 @@ mod tests {
             app.context_used_percent,
             app.view.tab_bar_rect,
         );
-        assert_eq!(tab_area, Rect::new(0, 0, 21, 1));
+        assert_eq!(tab_area, Rect::new(7, 0, 14, 1));
 
         let backend = TestBackend::new(40, 1);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -698,7 +733,7 @@ mod tests {
             .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
             .unwrap();
         let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
-        assert!(row.starts_with(" test    31%"), "tab row: {row:?}");
+        assert!(row.starts_with(" test   1       31%"), "tab row: {row:?}");
     }
 
     #[test]
@@ -734,7 +769,10 @@ mod tests {
             .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
             .unwrap();
         let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
-        assert!(row.starts_with(" test    31% ●3"), "tab row: {row:?}");
+        assert!(
+            row.starts_with(" test   1       31% ●3"),
+            "tab row: {row:?}"
+        );
     }
 
     #[test]
