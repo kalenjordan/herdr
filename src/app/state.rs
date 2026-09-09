@@ -773,8 +773,10 @@ pub enum Mode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProjectPickerEntry {
     pub name: String,
+    pub tab_name: Option<String>,
     pub path: std::path::PathBuf,
     pub workspace_idx: Option<usize>,
+    pub tab_idx: Option<usize>,
 }
 
 #[derive(Debug, Clone, Default)]

@@ -76,8 +76,13 @@ pub(super) fn render_project_picker_overlay(app: &AppState, frame: &mut Frame) {
                 "repo"
             };
             let status_width = 8usize;
+            let label = entry
+                .tab_name
+                .as_ref()
+                .map(|tab_name| format!("{} / {tab_name}", entry.name))
+                .unwrap_or_else(|| entry.name.clone());
             let name = truncate_end(
-                &entry.name,
+                &label,
                 rect.width.saturating_sub(status_width as u16 + 4) as usize,
             );
             frame.render_widget(

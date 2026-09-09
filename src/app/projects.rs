@@ -30,27 +30,48 @@ impl App {
 
         let mut entries: Vec<_> = paths
             .into_iter()
-            .map(|path| {
+            .flat_map(|path| {
                 let canonical_path = canonical(&path);
                 let workspace_idx = self
                     .state
                     .workspaces
                     .iter()
                     .position(|workspace| canonical(&workspace.identity_cwd) == canonical_path);
-                ProjectPickerEntry {
-                    name: workspace_idx
-                        .and_then(|idx| self.state.workspaces.get(idx))
-                        .map(|workspace| {
-                            workspace
-                                .display_name_from(&self.state.terminals, &self.terminal_runtimes)
-                        })
-                        .unwrap_or_else(|| project_name(&path)),
-                    path: canonical_path,
-                    workspace_idx,
-                }
+                let Some(workspace_idx) = workspace_idx else {
+                    return vec![ProjectPickerEntry {
+                        name: project_name(&path),
+                        tab_name: None,
+                        path: canonical_path,
+                        workspace_idx: None,
+                        tab_idx: None,
+                    }];
+                };
+                let Some(workspace) = self.state.workspaces.get(workspace_idx) else {
+                    return Vec::new();
+                };
+                let name =
+                    workspace.display_name_from(&self.state.terminals, &self.terminal_runtimes);
+                workspace
+                    .tabs
+                    .iter()
+                    .enumerate()
+                    .map(|(tab_idx, _)| ProjectPickerEntry {
+                        name: name.clone(),
+                        tab_name: workspace.tab_display_name(tab_idx),
+                        path: canonical_path.clone(),
+                        workspace_idx: Some(workspace_idx),
+                        tab_idx: Some(tab_idx),
+                    })
+                    .collect::<Vec<_>>()
             })
             .collect();
-        entries.sort_by_key(|entry| (entry.workspace_idx.is_none(), entry.name.to_lowercase()));
+        entries.sort_by_key(|entry| {
+            (
+                entry.workspace_idx.is_none(),
+                entry.name.to_lowercase(),
+                entry.tab_idx,
+            )
+        });
         entries
     }
 
@@ -139,6 +160,13 @@ impl App {
         };
         let entry = self.state.project_picker.entries[entry_index].clone();
         if let Some(workspace_idx) = entry.workspace_idx {
+            if let Some(tab_idx) = entry.tab_idx {
+                if let Some(tab_id) = self.public_tab_id(workspace_idx, tab_idx) {
+                    self.runtime_tab_focus("tui.project.tab.focus", tab_id);
+                    self.close_project_picker();
+                    return;
+                }
+            }
             let workspace_id = self.public_workspace_id(workspace_idx);
             self.runtime_workspace_focus("tui.project.focus", workspace_id);
             self.close_project_picker();
@@ -200,6 +228,10 @@ impl AppState {
             .filter(|(_, entry)| {
                 query.is_empty()
                     || entry.name.to_lowercase().contains(&query)
+                    || entry
+                        .tab_name
+                        .as_ref()
+                        .is_some_and(|name| name.to_lowercase().contains(&query))
                     || entry.path.to_string_lossy().to_lowercase().contains(&query)
             })
             .map(|(index, _)| index)
@@ -268,18 +300,24 @@ mod tests {
         state.project_picker.entries = vec![
             ProjectPickerEntry {
                 name: "Herdr".into(),
+                tab_name: Some("Release notes".into()),
                 path: "/repos/herdr".into(),
                 workspace_idx: Some(0),
+                tab_idx: Some(0),
             },
             ProjectPickerEntry {
                 name: "Storefront".into(),
+                tab_name: None,
                 path: "/clients/acme/storefront".into(),
                 workspace_idx: None,
+                tab_idx: None,
             },
         ];
         state.project_picker.query = "HERD".into();
         assert_eq!(state.filtered_project_indices(), vec![0]);
         state.project_picker.query = "acme".into();
         assert_eq!(state.filtered_project_indices(), vec![1]);
+        state.project_picker.query = "release".into();
+        assert_eq!(state.filtered_project_indices(), vec![0]);
     }
 }
