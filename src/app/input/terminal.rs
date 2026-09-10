@@ -78,7 +78,25 @@ impl App {
         if command != "/clear" {
             return;
         }
-        self.state.suppress_codex_context_for_clear(ws_idx, pane_id);
+        if !self.state.suppress_codex_context_for_clear(ws_idx, pane_id) {
+            return;
+        }
+        let Some(tab_idx) = self.state.workspaces.get(ws_idx).map(|ws| ws.active_tab) else {
+            return;
+        };
+        let Some(tab_id) = self.public_tab_id(ws_idx, tab_idx) else {
+            return;
+        };
+        let Some(label) = self.state.workspaces[ws_idx]
+            .public_tab_number(tab_idx)
+            .map(|number| number.to_string())
+        else {
+            return;
+        };
+        self.runtime_tab_rename(
+            "tui.codex.clear_tab_name",
+            crate::api::schema::TabRenameParams { tab_id, label },
+        );
     }
 
     pub(crate) fn observe_pending_pane_paste(
@@ -345,6 +363,7 @@ mod tests {
         let (mut app, _) = app_with_screen_bytes(b"");
         let terminal_id = set_focused_codex_session(&mut app, "old-session");
         app.state.context_used_percent = Some(64);
+        app.state.workspaces[0].tabs[0].set_custom_name("previous-task".into());
 
         type_terminal_text(&mut app, "/clear");
         app.handle_terminal_key_headless(TerminalKey::new(KeyCode::Enter, KeyModifiers::empty()));
@@ -356,6 +375,14 @@ mod tests {
                 .get(&terminal_id)
                 .map(String::as_str),
             Some("old-session")
+        );
+        assert_eq!(
+            app.state.workspaces[0].tabs[0].custom_name.as_deref(),
+            Some("1")
+        );
+        assert_eq!(
+            app.state.workspaces[0].tab_display_name(0).as_deref(),
+            Some("1")
         );
     }
 
@@ -373,6 +400,20 @@ mod tests {
             .state
             .suppressed_codex_context_sessions
             .contains_key(&terminal_id));
+    }
+
+    #[tokio::test]
+    async fn submitting_clear_outside_codex_does_not_reset_tab_name() {
+        let (mut app, _) = app_with_screen_bytes(b"");
+        app.state.workspaces[0].tabs[0].set_custom_name("shell-task".into());
+
+        type_terminal_text(&mut app, "/clear");
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::Enter, KeyModifiers::empty()));
+
+        assert_eq!(
+            app.state.workspaces[0].tabs[0].custom_name.as_deref(),
+            Some("shell-task")
+        );
     }
 
     #[tokio::test]

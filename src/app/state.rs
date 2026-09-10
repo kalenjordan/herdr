@@ -1539,9 +1539,13 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub(crate) fn suppress_codex_context_for_clear(&mut self, ws_idx: usize, pane_id: PaneId) {
+    pub(crate) fn suppress_codex_context_for_clear(
+        &mut self,
+        ws_idx: usize,
+        pane_id: PaneId,
+    ) -> bool {
         let Some(terminal_id) = self.terminal_id_for_pane(ws_idx, pane_id) else {
-            return;
+            return false;
         };
         let Some(session_id) = self
             .terminals
@@ -1549,7 +1553,7 @@ impl AppState {
             .and_then(|terminal| terminal.codex_session_id())
             .map(str::to_owned)
         else {
-            return;
+            return false;
         };
         self.suppressed_codex_context_sessions
             .insert(terminal_id, session_id);
@@ -1562,6 +1566,7 @@ impl AppState {
         {
             self.context_used_percent = None;
         }
+        true
     }
 
     pub(crate) fn mark_session_dirty(&mut self) {
