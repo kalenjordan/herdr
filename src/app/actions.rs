@@ -2513,6 +2513,7 @@ fn clickable_target_at_column(
     let path_span = path_spans(row, &cells, cwd)
         .into_iter()
         .find(|span| span.span.contains(clicked_idx))?;
+    std::fs::metadata(&path_span.path).ok()?;
     let (start_col, end_col) = path_span.span.columns(&cells);
     Some((start_col, end_col, path_span.uri, false))
 }
@@ -2520,6 +2521,7 @@ fn clickable_target_at_column(
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PathSpan {
     span: CellSpan,
+    path: PathBuf,
     uri: String,
 }
 
@@ -2527,11 +2529,6 @@ fn path_spans(row: &str, cells: &[TextCell], cwd: Option<&Path>) -> Vec<PathSpan
     let mut spans = Vec::new();
     for span in quoted_path_spans(cells) {
         push_resolved_path_span(&mut spans, row, span, cwd);
-    }
-    for path_span in unquoted_path_spans(row, cells, cwd) {
-        if !spans_overlap_any(path_span.span, spans.iter().map(|existing| existing.span)) {
-            spans.push(path_span);
-        }
     }
     for span in token_spans(cells) {
         push_resolved_path_span(&mut spans, row, span, cwd);
@@ -2561,50 +2558,9 @@ fn push_resolved_path_span(
     };
     spans.push(PathSpan {
         span,
+        path: path.clone(),
         uri: file_uri_for_path(&path),
     });
-}
-
-fn unquoted_path_spans(row: &str, cells: &[TextCell], cwd: Option<&Path>) -> Vec<PathSpan> {
-    let mut spans = Vec::new();
-    for start in 0..cells.len() {
-        let starts_path = starts_with_chars(&cells[start..], "~/")
-            || starts_with_chars(&cells[start..], "./")
-            || starts_with_chars(&cells[start..], "../")
-            || cells[start].ch == '/';
-        let has_boundary = start == 0
-            || cells[start - 1].ch.is_whitespace()
-            || is_leading_token_wrapper(cells[start - 1].ch);
-        if !starts_path || !has_boundary {
-            continue;
-        }
-
-        for end in (start..cells.len()).rev() {
-            let has_end_boundary = end + 1 == cells.len()
-                || cells[end + 1].ch.is_whitespace()
-                || is_trailing_token_wrapper(cells[end + 1].ch);
-            if !has_end_boundary {
-                continue;
-            }
-            let Some(span) = trim_token_edges(cells, CellSpan { start, end }) else {
-                continue;
-            };
-            let start_byte = byte_index_for_cell(row, span.start);
-            let end_byte = byte_index_after_cell(row, span.end);
-            let Some(text) = row.get(start_byte..end_byte) else {
-                continue;
-            };
-            let Some(path) = resolve_visible_path(text, cwd) else {
-                continue;
-            };
-            spans.push(PathSpan {
-                span,
-                uri: file_uri_for_path(&path),
-            });
-            break;
-        }
-    }
-    spans
 }
 
 fn quoted_path_spans(cells: &[TextCell]) -> Vec<CellSpan> {
@@ -2656,16 +2612,10 @@ fn resolve_visible_path(text: &str, cwd: Option<&Path>) -> Option<PathBuf> {
     if text.starts_with("http://") || text.starts_with("https://") {
         return None;
     }
-    let mut path_text = text;
-    let mut stripped_suffix = None;
-    if let Some(stripped) = strip_line_column_suffix(path_text) {
-        stripped_suffix = Some(stripped);
-    }
-
-    resolve_path_candidate(path_text, cwd).or_else(|| {
-        path_text = stripped_suffix?;
-        resolve_path_candidate(path_text, cwd)
-    })
+    let path_text = strip_line_column_suffix(text).unwrap_or(text);
+    // Rendering calls this for every visible path-shaped token. Keep resolution
+    // lexical here; clickable_target_at_column validates the selected path once.
+    resolve_path_candidate(path_text, cwd)
 }
 
 fn strip_line_column_suffix(text: &str) -> Option<&str> {
@@ -2691,7 +2641,6 @@ fn resolve_path_candidate(text: &str, cwd: Option<&Path>) -> Option<PathBuf> {
     } else {
         cwd?.join(path)
     };
-    std::fs::metadata(&path).ok()?;
     Some(path)
 }
 
@@ -4043,7 +3992,26 @@ mod tests {
     }
 
     #[test]
-    fn clickable_spans_include_unquoted_home_paths_with_spaces() {
+    fn clickable_spans_resolve_parenthesized_relative_media_paths() {
+        let dir = std::env::temp_dir().join(format!(
+            "herdr-clickable-parenthesized-media-{}",
+            std::process::id()
+        ));
+        let file = dir.join("research/clips/example/out/final.mp4");
+        std::fs::create_dir_all(file.parent().expect("file parent")).expect("create parent");
+        std::fs::write(&file, b"video").expect("write file");
+        let row = "Rendered (research/clips/example/out/final.mp4) · 51.7 seconds";
+
+        let uri = selected_clickable_uri(row, "final.mp4", Some(&dir))
+            .expect("parenthesized relative media path uri");
+
+        assert_eq!(uri, file_uri_for_path(&file));
+        assert!(clickable_target_at_column(row, col_of(row, "final.mp4"), Some(&dir)).is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn clickable_spans_include_quoted_home_paths_with_spaces() {
         let Some(home) = std::env::var_os("HOME") else {
             return;
         };
@@ -4057,13 +4025,23 @@ mod tests {
                 .expect("file under home")
                 .display()
         );
-        let row = format!("open {visible}");
+        let row = format!("open \"{visible}\"");
 
         let uri = selected_clickable_uri(&row, "audio.mp3", None)
-            .expect("unquoted path with spaces should be clickable");
+            .expect("quoted path with spaces should be clickable");
 
         assert_eq!(uri, file_uri_for_path(&file));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn clickable_spans_include_nonexistent_paths_without_filesystem_validation() {
+        let row = "ssh host 'cd /home/Kalen/outbound-dash && npm test'";
+        let uri = selected_clickable_uri(row, "outbound", None)
+            .expect("syntactic path should be linked during rendering");
+
+        assert_eq!(uri, "file:///home/Kalen/outbound-dash");
+        assert!(clickable_target_at_column(row, col_of(row, "outbound"), None).is_none());
     }
 
     #[test]
