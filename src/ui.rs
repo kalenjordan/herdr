@@ -495,7 +495,7 @@ fn render_recent_workspace_overlay(
                 .position(|tab| tab.number == target.tab_number)?;
             let workspace = ws.display_name_from(&app.terminals, terminal_runtimes);
             let tab = ws.tab_display_name(tab_idx)?;
-            Some(format!("{workspace} · {tab}"))
+            Some((workspace, tab))
         })
         .collect();
     let empty_message = match state.kind {
@@ -506,7 +506,11 @@ fn render_recent_workspace_overlay(
     };
     let width = labels
         .iter()
-        .map(|label| text::display_width_u16(label))
+        .map(|(workspace, tab)| {
+            text::display_width_u16(workspace)
+                .saturating_add(text::display_width_u16(" · "))
+                .saturating_add(text::display_width_u16(tab))
+        })
         .chain(std::iter::once(text::display_width_u16(empty_message)))
         .max()
         .unwrap_or(1)
@@ -529,7 +533,7 @@ fn render_recent_workspace_overlay(
         labels
             .into_iter()
             .enumerate()
-            .map(|(idx, label)| {
+            .map(|(idx, (workspace, tab))| {
                 let style = if idx == state.selected {
                     Style::default()
                         .fg(panel_contrast_fg(&app.palette))
@@ -537,7 +541,15 @@ fn render_recent_workspace_overlay(
                 } else {
                     Style::default().fg(app.palette.text)
                 };
-                Line::styled(format!(" {label}"), style)
+                let tab_style = if idx == state.selected {
+                    style
+                } else {
+                    Style::default().fg(app.palette.overlay0)
+                };
+                Line::from(vec![
+                    Span::styled(format!(" {workspace} · "), style),
+                    Span::styled(tab, tab_style),
+                ])
             })
             .collect()
     };
@@ -1439,6 +1451,46 @@ mod tests {
             "screen: {text}"
         );
         assert!(!text.contains("old-name"), "screen: {text}");
+    }
+
+    #[test]
+    fn recent_workspace_overlay_mutes_unselected_tab_names() {
+        let mut app = crate::app::state::AppState::test_new();
+        let mut first = Workspace::test_new("first");
+        first.set_custom_name("First workspace".into());
+        first.tabs[0].set_custom_name("First tab".into());
+        let mut second = Workspace::test_new("second");
+        second.set_custom_name("Second workspace".into());
+        second.tabs[0].set_custom_name("Second tab".into());
+        app.recent_workspace = Some(crate::app::state::RecentWorkspaceState {
+            kind: crate::app::state::WorkspaceSwitcherKind::Recent,
+            candidates: vec![
+                crate::app::state::WorkspaceTabTarget {
+                    workspace_id: first.id.clone(),
+                    tab_number: first.tabs[0].number,
+                },
+                crate::app::state::WorkspaceTabTarget {
+                    workspace_id: second.id.clone(),
+                    tab_number: second.tabs[0].number,
+                },
+            ],
+            selected: 0,
+        });
+        app.workspaces = vec![first, second];
+        app.mode = Mode::RecentWorkspace;
+        let area = Rect::new(0, 0, 60, 16);
+        compute_view(&mut app, area);
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal.draw(|frame| render(&app, frame)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let (row, text) = (0..area.height)
+            .map(|row| (row, buffer_row_text(buffer, area, row)))
+            .find(|(_, text)| text.contains("Second workspace · Second tab"))
+            .expect("rendered unselected row");
+        let tab_offset = text.find("Second tab").expect("rendered unselected tab");
+        let tab_x = text::display_width_u16(&text[..tab_offset]);
+        assert_eq!(buffer[(tab_x, row)].fg, app.palette.overlay0);
     }
 
     #[test]
