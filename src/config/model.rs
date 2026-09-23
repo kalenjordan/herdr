@@ -801,6 +801,8 @@ pub struct ProjectsConfig {
     pub directories: Vec<String>,
     /// Command started in a newly opened project workspace.
     pub command: String,
+    /// Repositories shown first in the project picker, in priority order.
+    pub priority: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1019,6 +1021,7 @@ impl Default for ProjectsConfig {
         Self {
             directories: Vec::new(),
             command: "codex".into(),
+            priority: Vec::new(),
         }
     }
 }

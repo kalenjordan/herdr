@@ -577,6 +577,7 @@ impl App {
                 .map(|path| crate::worktree::expand_tilde_path(path))
                 .collect(),
             project_command: config.projects.command.clone(),
+            project_priorities: projects::priorities_from_config(&config.projects.priority),
             copy_mode: None,
             workspace_scroll: 0,
             agent_panel_scroll: 0,
@@ -1537,6 +1538,8 @@ impl App {
                 .map(|path| crate::worktree::expand_tilde_path(path))
                 .collect();
             self.state.project_command = config.projects.command.clone();
+            self.state.project_priorities =
+                projects::priorities_from_config(&config.projects.priority);
         }
 
         if !invalid_section("theme") {
@@ -2678,7 +2681,7 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
             &path,
-            "[terminal]\ndefault_shell = \"nu\"\nshell_mode = \"non_login\"\nnew_cwd = \"home\"\n[keys]\nnew_workspace = \"prefix+m\"\nprefix = \"ctrl+a\"\n[update]\nversion_check = false\nmanifest_check = false\n[ui]\nagent_panel_scope = \"current\"\nagent_panel_sort = \"priority\"\nredraw_on_focus_gained = false\nright_click_passthrough_modifier = \"ctrl\"\n[ui.toast]\ndelivery = \"herdr\"\n[experimental]\nswitch_ascii_input_source_in_prefix = true\n",
+            "[terminal]\ndefault_shell = \"nu\"\nshell_mode = \"non_login\"\nnew_cwd = \"home\"\n[keys]\nnew_workspace = \"prefix+m\"\nprefix = \"ctrl+a\"\n[update]\nversion_check = false\nmanifest_check = false\n[ui]\nagent_panel_scope = \"current\"\nagent_panel_sort = \"priority\"\nredraw_on_focus_gained = false\nright_click_passthrough_modifier = \"ctrl\"\n[ui.toast]\ndelivery = \"herdr\"\n[experimental]\nswitch_ascii_input_source_in_prefix = true\n[projects]\npriority = [\"/repos/voice-control\"]\n",
         )
         .unwrap();
         std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
@@ -2721,6 +2724,11 @@ mod tests {
         assert!(app.next_auto_update_check.is_none());
         assert!(app.next_agent_manifest_update_check.is_none());
         assert!(app.state.switch_ascii_input_source_in_prefix);
+        assert_eq!(app.state.project_priorities.len(), 1);
+        assert_eq!(
+            app.state.project_priorities[0],
+            std::path::PathBuf::from("/repos/voice-control")
+        );
         assert!(app.state.config_diagnostic.is_none());
         let toast = app.state.toast.as_ref().unwrap();
         assert_eq!(toast.kind, crate::app::state::ToastKind::UpdateInstalled);

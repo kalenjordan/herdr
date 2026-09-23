@@ -214,7 +214,10 @@ next_tab = ["prefix+n", "ctrl+alt+]"]
 [projects]
 directories = ["~/repos"]
 command = "codex"
+priority = ["~/repos/voice-control"]
 ```
+
+`priority` puts those repositories first in the project picker, in the order listed. This applies to the unfiltered list and every matching search, including partial searches such as `voi`. Other repositories keep their usual order. Hyphens and spaces match interchangeably, so `voice control` finds `voice-control`. After editing `config.toml`, run `herdr server reload-config` to apply changes without restarting Herdr.
 
 `remote_image_paste` is only active in `herdr --remote`. It is the local-client shortcut that sends a local clipboard image to the remote pane. Set it to an empty string to disable the raw-key shortcut; remote terminal paste-image signals still work when the outer terminal sends them.
 

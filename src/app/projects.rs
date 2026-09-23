@@ -65,13 +65,7 @@ impl App {
                     .collect::<Vec<_>>()
             })
             .collect();
-        entries.sort_by_key(|entry| {
-            (
-                entry.workspace_idx.is_none(),
-                entry.name.to_lowercase(),
-                entry.tab_idx,
-            )
-        });
+        sort_project_entries(&mut entries, &self.state.project_priorities);
         entries
     }
 
@@ -220,19 +214,19 @@ impl App {
 
 impl AppState {
     pub(crate) fn filtered_project_indices(&self) -> Vec<usize> {
-        let query = self.project_picker.query.trim().to_lowercase();
+        let query = normalize_search(&self.project_picker.query);
         self.project_picker
             .entries
             .iter()
             .enumerate()
             .filter(|(_, entry)| {
                 query.is_empty()
-                    || entry.name.to_lowercase().contains(&query)
+                    || normalize_search(&entry.name).contains(&query)
                     || entry
                         .tab_name
                         .as_ref()
-                        .is_some_and(|name| name.to_lowercase().contains(&query))
-                    || entry.path.to_string_lossy().to_lowercase().contains(&query)
+                        .is_some_and(|name| normalize_search(name).contains(&query))
+                    || normalize_search(&entry.path.to_string_lossy()).contains(&query)
             })
             .map(|(index, _)| index)
             .collect()
@@ -244,6 +238,45 @@ impl AppState {
             .filter_map(|index| self.project_picker.entries.get(index))
             .collect()
     }
+}
+
+fn sort_project_entries(entries: &mut [ProjectPickerEntry], priorities: &[PathBuf]) {
+    entries.sort_by_key(|entry| {
+        (
+            priorities
+                .iter()
+                .position(|path| *path == entry.path)
+                .unwrap_or(usize::MAX),
+            entry.workspace_idx.is_none(),
+            entry.name.to_lowercase(),
+            entry.tab_idx,
+        )
+    });
+}
+
+pub(super) fn priorities_from_config(configured: &[String]) -> Vec<PathBuf> {
+    configured
+        .iter()
+        .filter(|path| !path.trim().is_empty())
+        .map(|path| canonical(&crate::worktree::expand_tilde_path(path)))
+        .collect()
+}
+
+fn normalize_search(value: &str) -> String {
+    value
+        .to_lowercase()
+        .chars()
+        .map(|character| {
+            if character.is_alphanumeric() {
+                character
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn canonical(path: &Path) -> PathBuf {
@@ -319,5 +352,60 @@ mod tests {
         assert_eq!(state.filtered_project_indices(), vec![1]);
         state.project_picker.query = "release".into();
         assert_eq!(state.filtered_project_indices(), vec![0]);
+    }
+
+    #[test]
+    fn project_priority_promotes_preferred_repo_for_all_matching_queries() {
+        let mut state = AppState::test_new();
+        state.project_picker.entries = vec![
+            ProjectPickerEntry {
+                name: "fluidvoice".into(),
+                tab_name: None,
+                path: "/repos/fluidvoice".into(),
+                workspace_idx: Some(0),
+                tab_idx: Some(0),
+            },
+            ProjectPickerEntry {
+                name: "voice-control".into(),
+                tab_name: None,
+                path: "/repos/voice-control".into(),
+                workspace_idx: None,
+                tab_idx: None,
+            },
+        ];
+        state.project_priorities = vec!["/repos/voice-control".into()];
+        sort_project_entries(&mut state.project_picker.entries, &state.project_priorities);
+
+        state.project_picker.query = "voi".into();
+        assert_eq!(state.filtered_project_indices(), vec![0, 1]);
+        state.project_picker.query = "voice".into();
+        assert_eq!(state.filtered_project_indices(), vec![0, 1]);
+        state.project_picker.query = "voice control".into();
+        assert_eq!(state.filtered_project_indices(), vec![0]);
+        state.project_picker.query = "fluid".into();
+        assert_eq!(state.filtered_project_indices(), vec![1]);
+        state.project_picker.query.clear();
+        assert_eq!(state.filtered_project_indices(), vec![0, 1]);
+    }
+
+    #[test]
+    fn priority_rules_keep_config_order() {
+        let mut state = AppState::test_new();
+        state.project_picker.entries = ["voice-one", "voice-two", "voice-three"]
+            .into_iter()
+            .map(|name| ProjectPickerEntry {
+                name: name.into(),
+                tab_name: None,
+                path: format!("/repos/{name}").into(),
+                workspace_idx: None,
+                tab_idx: None,
+            })
+            .collect();
+        state.project_priorities = vec!["/repos/voice-three".into(), "/repos/voice-two".into()];
+        sort_project_entries(&mut state.project_picker.entries, &state.project_priorities);
+        state.project_picker.query = "voice".into();
+        assert_eq!(state.project_picker.entries[0].name, "voice-three");
+        assert_eq!(state.project_picker.entries[1].name, "voice-two");
+        assert_eq!(state.filtered_project_indices(), vec![0, 1, 2]);
     }
 }
