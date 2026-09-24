@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -106,17 +107,50 @@ pub fn git_status_snapshot_for_cwd(
 
 pub(crate) fn git_dirty_count(cwd: &Path) -> Option<usize> {
     let output = Command::new("git")
-        .args(["status", "--porcelain=v1", "--untracked-files=normal"])
+        .args(["status", "--porcelain=v1", "-z", "--untracked-files=normal"])
         .current_dir(cwd)
         .output()
         .ok()?;
-    output.status.success().then_some(
-        output
-            .stdout
-            .split(|byte| *byte == b'\n')
-            .filter(|line| !line.is_empty())
-            .count(),
-    )
+    if !output.status.success() {
+        return None;
+    }
+
+    let mut count = 0;
+    let mut unstaged_modified = Vec::new();
+    let mut records = output.stdout.split(|byte| *byte == b'\0');
+    while let Some(record) = records.next() {
+        if record.is_empty() {
+            continue;
+        }
+        count += 1;
+        if record.len() < 4 {
+            continue;
+        }
+        if record[0] == b' ' && record[1] == b'M' {
+            unstaged_modified.push(&record[3..]);
+        }
+        // Porcelain -z adds a second path after rename and copy records.
+        if matches!(record[0], b'R' | b'C') || matches!(record[1], b'R' | b'C') {
+            records.next();
+        }
+    }
+
+    if !unstaged_modified.is_empty() {
+        let diff = Command::new("git")
+            .args(["diff", "--name-only", "-z", "--no-ext-diff"])
+            .current_dir(cwd)
+            .output()
+            .ok()?;
+        if !diff.status.success() {
+            return None;
+        }
+        let changed: HashSet<&[u8]> = diff.stdout.split(|byte| *byte == b'\0').collect();
+        count -= unstaged_modified
+            .iter()
+            .filter(|path| !changed.contains(**path))
+            .count();
+    }
+    Some(count)
 }
 
 pub(super) fn git_status_fingerprint(cwd: &Path) -> Option<GitStatusFingerprint> {
@@ -295,6 +329,10 @@ mod tests {
         assert_eq!(git_dirty_count(&root), Some(1));
         run_git(&root, &["reset", "--hard", "HEAD"]);
 
+        run_git(&root, &["mv", "tracked.txt", "renamed.txt"]);
+        assert_eq!(git_dirty_count(&root), Some(1));
+        run_git(&root, &["reset", "--hard", "HEAD"]);
+
         std::fs::write(root.join(".gitignore"), "ignored.txt\n").unwrap();
         run_git(&root, &["add", ".gitignore"]);
         run_git(&root, &["commit", "-m", "ignore test file"]);
@@ -304,6 +342,41 @@ mod tests {
         std::fs::remove_file(root.join("tracked.txt")).unwrap();
         assert_eq!(git_dirty_count(&root), Some(1));
 
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn git_dirty_ignores_changes_removed_by_clean_filter() {
+        let root = initialized_repo("dirty-clean-filter");
+        std::fs::write(
+            root.join(".gitattributes"),
+            "tracked.txt filter=stripspace\n",
+        )
+        .unwrap();
+        run_git(
+            &root,
+            &["config", "filter.stripspace.clean", "git stripspace"],
+        );
+        run_git(&root, &["add", ".gitattributes"]);
+        run_git(&root, &["commit", "-m", "add clean filter"]);
+
+        std::fs::write(root.join("tracked.txt"), "initial\n\n").unwrap();
+        let status = Command::new("git")
+            .args(["status", "--porcelain=v1"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(status.status.success());
+        assert_eq!(status.stdout, b" M tracked.txt\n");
+        assert_eq!(git_dirty_count(&root), Some(0));
+
+        std::fs::write(root.join("untracked.txt"), "new\n").unwrap();
+        assert_eq!(git_dirty_count(&root), Some(1));
+        run_git(&root, &["add", "untracked.txt"]);
+        assert_eq!(git_dirty_count(&root), Some(1));
+
+        std::fs::write(root.join("tracked.txt"), "changed\n").unwrap();
+        assert_eq!(git_dirty_count(&root), Some(2));
         std::fs::remove_dir_all(root).unwrap();
     }
 
