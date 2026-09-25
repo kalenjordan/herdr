@@ -78,6 +78,22 @@ impl Selection {
         }
     }
 
+    pub(crate) fn viewport_range(
+        pane_id: PaneId,
+        start_row: u16,
+        start_col: u16,
+        end_row: u16,
+        end_col: u16,
+        metrics: Option<ScrollMetrics>,
+    ) -> Self {
+        Self {
+            pane_id,
+            anchor: (absolute_row_for_viewport_row(start_row, metrics), start_col),
+            cursor: (absolute_row_for_viewport_row(end_row, metrics), end_col),
+            phase: Phase::Dragging,
+        }
+    }
+
     pub(crate) fn line_range(
         pane_id: PaneId,
         anchor_row: u32,

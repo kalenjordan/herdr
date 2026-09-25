@@ -850,6 +850,105 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn pane_cell_clickable_target_selects_path_across_soft_wrap() {
+        let dir = std::env::temp_dir().join(format!("hcwrap{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let file = dir.join("wrapped-file-name.rs");
+        std::fs::write(&file, b"fn main() {}\n").expect("write file");
+        let (_empty, info) = app_with_screen_bytes(b"");
+        let padding = "x".repeat(info.inner_rect.width as usize - 10);
+        let line = format!("{padding} {}", file.display());
+        let (app, _) = app_with_screen_bytes(line.as_bytes());
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+
+        let target = app
+            .state
+            .clickable_target_at_pane_cell(&app.terminal_runtimes, pane_id, 1, 3)
+            .expect("wrapped file path target");
+
+        assert_eq!(
+            target.uri,
+            format!("file://{}", file.to_string_lossy().replace(' ', "%20"))
+        );
+        let ((start_row, start_col), (end_row, end_col)) = target.selection.ordered_cells();
+        assert_eq!(start_row + 1, end_row);
+        assert_eq!(start_col, info.inner_rect.width - 9);
+        assert!(end_col > 3);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn pane_cell_clickable_target_handles_wide_character_at_wrap() {
+        let dir = std::env::temp_dir().join(format!("hcwide{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let file = dir.join("界wrapped.rs");
+        std::fs::write(&file, b"fn main() {}\n").expect("write file");
+        let (_empty, info) = app_with_screen_bytes(b"");
+        let path_prefix = format!("{}/", dir.display());
+        let padding = "x".repeat(info.inner_rect.width as usize - 2 - path_prefix.len());
+        let line = format!("{padding} {path_prefix}界wrapped.rs");
+        let (app, _) = app_with_screen_bytes(line.as_bytes());
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+
+        let target = app
+            .state
+            .clickable_target_at_pane_cell(&app.terminal_runtimes, pane_id, 1, 3)
+            .expect("wrapped Unicode file path target");
+
+        assert_eq!(
+            target.uri,
+            format!("file://{}/%E7%95%8Cwrapped.rs", dir.display())
+        );
+        let ((start_row, start_col), (end_row, end_col)) = target.selection.ordered_cells();
+        assert_eq!(start_row + 1, end_row);
+        assert_eq!(
+            start_col,
+            info.inner_rect.width - path_prefix.len() as u16 - 1
+        );
+        assert!(end_col > 3);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn pane_cell_clickable_target_opens_unquoted_spaced_path_across_wrap() {
+        let dir = std::env::temp_dir()
+            .join(format!("hcspaces{}", std::process::id()))
+            .join("Personal Streaming");
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let file = dir.join("Recording 2026-09-25 14-24-09 E4F288F6.mp4");
+        std::fs::write(&file, b"video").expect("write file");
+        let line = format!("I found the recording ({}).", file.display());
+        let (app, info) = app_with_screen_bytes(line.as_bytes());
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let byte_index = line.find("Recording").expect("file name");
+        let cell = crate::app::actions::visible_text_cells(&line, info.inner_rect.width)
+            .into_iter()
+            .find(|cell| cell.byte_index == byte_index)
+            .expect("visible file name");
+
+        let target = app
+            .state
+            .clickable_target_at_pane_cell(
+                &app.terminal_runtimes,
+                pane_id,
+                cell.screen_row,
+                cell.screen_col,
+            )
+            .expect("unquoted spaced file path target");
+
+        assert_eq!(
+            target.uri,
+            format!("file://{}", file.to_string_lossy().replace(' ', "%20"))
+        );
+        let ((start_row, _), (end_row, _)) = target.selection.ordered_cells();
+        assert!(end_row > start_row);
+        let _ = std::fs::remove_dir_all(dir.parent().expect("temp parent"));
+    }
+
     #[tokio::test]
     async fn pane_cell_url_resolver_finds_visible_url() {
         let line = "see https://example.com/pr/307.";
@@ -930,7 +1029,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn render_stream_synthesizes_soft_wrapped_url_hyperlinks() {
+    async fn render_stream_does_not_synthesize_soft_wrapped_url_hyperlinks() {
         let (_app, info) = app_with_screen_bytes(b"");
         let prefix = "https://example.com/";
         let padding = "b".repeat(info.inner_rect.width as usize - prefix.len());
@@ -940,30 +1039,36 @@ mod tests {
         let links =
             crate::server::render_stream::visible_hyperlinks(&app.state, &app.terminal_runtimes);
 
-        assert!(links
-            .iter()
-            .any(|((_, y), symbol, uri)| *y == info.inner_rect.y + 1
-                && symbol == "t"
-                && uri == &url));
+        assert!(links.is_empty());
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        assert_eq!(
+            app.state
+                .url_at_pane_cell(&app.terminal_runtimes, pane_id, 1, 1)
+                .as_deref(),
+            Some(url.as_str())
+        );
     }
 
     #[tokio::test]
-    async fn render_stream_does_not_shift_url_hyperlinks_after_zero_width_mark() {
+    async fn plain_text_url_after_zero_width_mark_resolves_on_click() {
         let url = "https://example.com/mark";
         let screen = format!("e\u{301} {url}");
-        let (app, info) = app_with_screen_bytes(screen.as_bytes());
+        let (app, _info) = app_with_screen_bytes(screen.as_bytes());
 
         let links =
             crate::server::render_stream::visible_hyperlinks(&app.state, &app.terminal_runtimes);
-
-        let expected_x = info.inner_rect.x + 2;
-        assert!(links.iter().any(|((x, y), symbol, uri)| {
-            *x == expected_x && *y == info.inner_rect.y && symbol == "h" && uri == url
-        }));
+        assert!(links.is_empty());
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        assert_eq!(
+            app.state
+                .url_at_pane_cell(&app.terminal_runtimes, pane_id, 0, 2)
+                .as_deref(),
+            Some(url)
+        );
     }
 
     #[tokio::test]
-    async fn render_stream_handles_hard_newline_after_full_row() {
+    async fn plain_text_url_click_respects_hard_newline_after_full_row() {
         let (_app, info) = app_with_screen_bytes(b"");
         let full_row = "x".repeat(info.inner_rect.width as usize);
         let url = "https://example.com/next";
@@ -971,32 +1076,29 @@ mod tests {
         let (app, _info) = app_with_screen_bytes(screen.as_bytes());
         let links =
             crate::server::render_stream::visible_hyperlinks(&app.state, &app.terminal_runtimes);
-
-        assert!(links
-            .iter()
-            .any(|((_, y), symbol, uri)| *y == info.inner_rect.y + 2
-                && symbol == "t"
-                && uri == url));
+        assert!(links.is_empty());
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        assert_eq!(
+            app.state
+                .url_at_pane_cell(&app.terminal_runtimes, pane_id, 2, 1)
+                .as_deref(),
+            Some(url)
+        );
     }
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn render_stream_synthesizes_existing_file_path_hyperlinks() {
+    async fn render_stream_keeps_plain_file_paths_out_of_frames() {
         let dir = std::env::temp_dir().join(format!("hcr{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("create temp dir");
         let file = dir.join("space.txt");
         std::fs::write(&file, b"hello\n").expect("write file");
         let line = format!("open \"{}:7\"", file.display());
-        let (app, info) = app_with_screen_bytes(line.as_bytes());
+        let (app, _info) = app_with_screen_bytes(line.as_bytes());
 
         let links =
             crate::server::render_stream::visible_hyperlinks(&app.state, &app.terminal_runtimes);
-        let expected_uri = format!("file://{}", file.to_string_lossy().replace(' ', "%20"));
-        let target_x = info.inner_rect.x + line.find("space").expect("file name") as u16;
-
-        assert!(links.iter().any(|((x, y), symbol, uri)| {
-            *x == target_x && *y == info.inner_rect.y && symbol == "s" && uri == &expected_uri
-        }));
+        assert!(links.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

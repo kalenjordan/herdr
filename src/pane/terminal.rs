@@ -23,7 +23,7 @@ use super::{
     input::{
         ghostty_key_event_from_terminal_key, ghostty_mouse_encoder_for_terminal,
         ghostty_mouse_event_from_button_kind, ghostty_mouse_event_from_motion_kind,
-        ghostty_mouse_event_from_wheel_kind, ghostty_prefers_herdr_text_encoding,
+        ghostty_prefers_herdr_text_encoding,
     },
     kitty_keyboard::KittyKeyboardTracker,
     osc::{
@@ -1464,7 +1464,11 @@ impl GhosttyPaneTerminal {
         let mouse_sgr = core
             .terminal
             .mode_get(crate::ghostty::MODE_MOUSE_SGR)
-            .ok()?;
+            .ok()?
+            || core
+                .terminal
+                .mode_get(crate::ghostty::MODE_MOUSE_SGR_PIXELS)
+                .ok()?;
         let mouse_utf8 = core
             .terminal
             .mode_get(crate::ghostty::MODE_MOUSE_UTF8)
@@ -1620,15 +1624,8 @@ impl GhosttyPaneTerminal {
         row: u16,
         modifiers: crossterm::event::KeyModifiers,
     ) -> Option<Vec<u8>> {
-        let Ok(core) = self.core.lock() else {
-            return None;
-        };
-        let mut encoder = ghostty_mouse_encoder_for_terminal(&core.terminal)?;
-        let event = ghostty_mouse_event_from_wheel_kind(kind, column, row, modifiers)?;
-        encoder
-            .encode(&event)
-            .ok()
-            .filter(|bytes| !bytes.is_empty())
+        let encoding = self.input_state()?.mouse_protocol_encoding;
+        crate::input::encode_mouse_scroll(kind, column, row, modifiers, encoding)
     }
 
     pub fn visible_text(&self) -> String {
@@ -3644,6 +3641,16 @@ mod tests {
         let key = crate::input::parse_terminal_key_sequence("\x1b[13;2u").unwrap();
         let encoded = pane.encode_terminal_key(key, crate::input::KeyboardProtocol::Legacy);
         assert_eq!(encoded, b"\x1b[27;2;13~");
+
+        assert_eq!(
+            pane.encode_mouse_wheel(
+                crossterm::event::MouseEventKind::ScrollDown,
+                4,
+                6,
+                crossterm::event::KeyModifiers::empty(),
+            ),
+            Some(b"\x1b[<65;5;7M".to_vec())
+        );
     }
 
     #[test]
@@ -3876,6 +3883,24 @@ mod tests {
         );
 
         assert_eq!(encoded.as_deref(), Some(&b"\x1b[<0;12;10m"[..]));
+    }
+
+    #[test]
+    fn mouse_wheel_encoding_uses_live_sgr_pixel_mode_as_cell_coordinates() {
+        let (tx, _rx) = mpsc::channel(4);
+        let mut terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+        terminal.write(b"\x1b[?1000h\x1b[?1016h");
+        let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
+
+        assert_eq!(
+            pane.encode_mouse_wheel(
+                crossterm::event::MouseEventKind::ScrollUp,
+                4,
+                6,
+                crossterm::event::KeyModifiers::empty(),
+            ),
+            Some(b"\x1b[<64;5;7M".to_vec())
+        );
     }
 
     #[test]

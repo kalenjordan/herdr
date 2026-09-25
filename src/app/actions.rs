@@ -2296,15 +2296,30 @@ impl AppState {
         let cwd = rt.foreground_cwd().or_else(|| rt.cwd());
         let (start_col, end_col, uri, plugin_eligible) =
             clickable_target_at_column(line, logical_cell.logical_col, cwd.as_deref())?;
-        self.pane_clickable_target(
+        let cells = visible_text_cells(&visible_text, info.inner_rect.width);
+        let mut span_cells = cells.iter().filter(|cell| {
+            cell.byte_index >= line_start
+                && cell.byte_index < line_end
+                && cell.logical_col >= start_col
+                && cell.logical_col <= end_col
+        });
+        let first = span_cells.clone().next()?;
+        let last = span_cells.next_back()?;
+        let last_width = UnicodeWidthChar::width(last.ch).unwrap_or(0) as u16;
+        let mut selection = Selection::viewport_range(
             pane_id,
-            viewport_row,
-            start_col,
-            end_col,
+            first.screen_row,
+            first.screen_col,
+            last.screen_row,
+            last.screen_col.saturating_add(last_width.saturating_sub(1)),
+            metrics,
+        );
+        selection.finish();
+        Some(PaneClickableTarget {
             uri,
+            selection,
             plugin_eligible,
-            terminal_runtimes,
-        )
+        })
     }
 
     fn pane_clickable_target(
@@ -2467,6 +2482,7 @@ pub(crate) fn url_at_column(row: &str, col: u16) -> Option<&str> {
     safe_web_url(row.get(start_byte..end_byte)?)
 }
 
+#[cfg(test)]
 pub(crate) fn clickable_spans(row: &str, cwd: Option<&Path>) -> Vec<(u16, u16, String)> {
     let mut spans = Vec::new();
     let cells = text_cells(row);
@@ -2510,12 +2526,61 @@ fn clickable_target_at_column(
         return Some((start_col, end_col, url.to_owned(), plugin_eligible));
     }
 
-    let path_span = path_spans(row, &cells, cwd)
-        .into_iter()
-        .find(|span| span.span.contains(clicked_idx))?;
+    let path_span = existing_spaced_path_at_cell(row, &cells, clicked_idx, cwd).or_else(|| {
+        path_spans(row, &cells, cwd)
+            .into_iter()
+            .find(|span| span.span.contains(clicked_idx))
+    })?;
     std::fs::metadata(&path_span.path).ok()?;
     let (start_col, end_col) = path_span.span.columns(&cells);
     Some((start_col, end_col, path_span.uri, false))
+}
+
+// An unquoted path in prose can contain spaces. Resolve its longest existing
+// prefix only after a click, so a directory before a space cannot mask a file.
+fn existing_spaced_path_at_cell(
+    row: &str,
+    cells: &[TextCell],
+    clicked_idx: usize,
+    cwd: Option<&Path>,
+) -> Option<PathSpan> {
+    let mut longest = None;
+    for start in 0..=clicked_idx {
+        if cells[start].ch != '/' || (start > 0 && !matches!(cells[start - 1].ch, ' ' | '(' | '['))
+        {
+            continue;
+        }
+        for end in clicked_idx..cells.len() {
+            if matches!(cells[end].ch, ')' | ']' | '}' | '"' | '\'' | '`') {
+                break;
+            }
+            if end + 1 < cells.len()
+                && !cells[end + 1].ch.is_whitespace()
+                && !matches!(cells[end + 1].ch, ')' | ']' | '}' | '"' | '\'' | '`')
+            {
+                continue;
+            }
+            let Some(span) = trim_token_edges(cells, CellSpan { start, end }) else {
+                continue;
+            };
+            if !span.contains(clicked_idx) {
+                continue;
+            }
+            let text = row
+                .get(byte_index_for_cell(row, span.start)..byte_index_after_cell(row, span.end))?;
+            let Some(path) = resolve_visible_path(text, cwd) else {
+                continue;
+            };
+            if std::fs::metadata(&path).is_ok() {
+                longest = Some(PathSpan {
+                    span,
+                    uri: file_uri_for_path(&path),
+                    path,
+                });
+            }
+        }
+    }
+    longest
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2613,8 +2678,8 @@ fn resolve_visible_path(text: &str, cwd: Option<&Path>) -> Option<PathBuf> {
         return None;
     }
     let path_text = strip_line_column_suffix(text).unwrap_or(text);
-    // Rendering calls this for every visible path-shaped token. Keep resolution
-    // lexical here; clickable_target_at_column validates the selected path once.
+    // Keep resolution lexical; clickable_target_at_column validates the selected
+    // path when the user clicks it.
     resolve_path_candidate(path_text, cwd)
 }
 
@@ -2743,6 +2808,10 @@ pub(crate) fn visible_text_cells(text: &str, pane_width: u16) -> Vec<VisibleText
         }
 
         let width = UnicodeWidthChar::width(ch).unwrap_or(0) as u16;
+        if width > 0 && screen_col > 0 && screen_col.saturating_add(width) > pane_width {
+            screen_row = screen_row.saturating_add(1);
+            screen_col = 0;
+        }
         cells.push(VisibleTextCell {
             byte_index,
             ch,
@@ -3803,6 +3872,22 @@ mod tests {
             .sum()
     }
 
+    #[test]
+    fn visible_text_cells_wrap_wide_character_before_last_column() {
+        let cells = visible_text_cells("1234界/path", 5);
+        let wide = cells
+            .iter()
+            .find(|cell| cell.ch == '界')
+            .expect("wide cell");
+        assert_eq!((wide.screen_row, wide.screen_col), (1, 0));
+        let slash = cells.iter().find(|cell| cell.ch == '/').expect("slash");
+        assert_eq!((slash.screen_row, slash.screen_col), (1, 2));
+        assert_eq!(
+            logical_cell_for_visible_cell("1234界/path", 5, 1, 1).map(|cell| cell.ch),
+            Some('界')
+        );
+    }
+
     fn assert_selects(row: &str, click: &str, expected: &str) {
         assert_eq!(
             selected_word(row, col_of(row, click)).as_deref(),
@@ -4032,6 +4117,27 @@ mod tests {
 
         assert_eq!(uri, file_uri_for_path(&file));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unquoted_spaced_path_in_prose_resolves_full_file() {
+        let dir = std::env::temp_dir()
+            .join(format!("herdr-spaced-path-{}", std::process::id()))
+            .join("Personal Streaming");
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let file = dir.join("Recording 2026-09-25 14-24-09 E4F288F6.mp4");
+        std::fs::write(&file, b"video").expect("write file");
+        let row = format!(
+            "I found the recording ({}). The question plays at 0:26.",
+            file.display()
+        );
+
+        for click in ["Personal", "Streaming", "Recording", "E4F288F6"] {
+            let (_, _, uri, _) = clickable_target_at_column(&row, col_of(&row, click), None)
+                .expect("unquoted path target");
+            assert_eq!(uri, file_uri_for_path(&file));
+        }
+        let _ = std::fs::remove_dir_all(dir.parent().expect("temp parent"));
     }
 
     #[test]

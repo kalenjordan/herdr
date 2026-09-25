@@ -52,7 +52,6 @@ pub fn encode_cursor_key(code: KeyCode, application_cursor: bool) -> Vec<u8> {
     }
 }
 
-#[allow(dead_code)] // exercised in input unit tests; pane runtime uses backend helpers
 pub fn encode_mouse_scroll(
     kind: MouseEventKind,
     column: u16,

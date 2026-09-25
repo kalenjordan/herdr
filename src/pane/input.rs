@@ -147,27 +147,6 @@ pub(super) fn ghostty_mouse_event_from_motion_kind(
     Some(event)
 }
 
-pub(super) fn ghostty_mouse_event_from_wheel_kind(
-    kind: crossterm::event::MouseEventKind,
-    column: u16,
-    row: u16,
-    modifiers: crossterm::event::KeyModifiers,
-) -> Option<crate::ghostty::MouseEvent> {
-    let mut event = crate::ghostty::MouseEvent::new().ok()?;
-    event.set_action(crate::ghostty::MOUSE_ACTION_PRESS);
-    let button = match kind {
-        crossterm::event::MouseEventKind::ScrollUp => crate::ghostty::MOUSE_BUTTON_WHEEL_UP,
-        crossterm::event::MouseEventKind::ScrollDown => crate::ghostty::MOUSE_BUTTON_WHEEL_DOWN,
-        crossterm::event::MouseEventKind::ScrollLeft => crate::ghostty::MOUSE_BUTTON_WHEEL_LEFT,
-        crossterm::event::MouseEventKind::ScrollRight => crate::ghostty::MOUSE_BUTTON_WHEEL_RIGHT,
-        _ => return None,
-    };
-    event.set_button(button);
-    event.set_mods(ghostty_mods_from_key_modifiers(modifiers));
-    event.set_position(column as f32, row as f32);
-    Some(event)
-}
-
 fn ghostty_key_text(key: crate::input::TerminalKey) -> Option<String> {
     match key.code {
         crossterm::event::KeyCode::Char(c) => Some(
