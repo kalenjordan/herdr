@@ -1568,6 +1568,11 @@ impl AppState {
     ) {
         let started = std::time::Instant::now();
         self.handle_terminal_wheel_inner(terminal_runtimes, mouse);
+        tracing::info!(
+            event = "performance.scroll_wheel",
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "terminal wheel processed"
+        );
         crate::logging::slow_path("server.terminal_wheel", started.elapsed(), "wheel");
     }
 

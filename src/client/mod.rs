@@ -798,14 +798,14 @@ fn do_handshake(
 enum ClientLoopEvent {
     /// Raw input bytes from stdin.
     #[cfg(unix)]
-    StdinInput(Vec<u8>),
+    StdinInput(Vec<u8>, Instant),
     /// Structured input events from platforms without Unix-style stdin bytes.
     #[cfg(windows)]
     StdinEvents(Vec<crate::protocol::ClientInputEvent>),
     /// Terminal resize detected.
     Resize(u16, u16, u32, u32),
     /// Server message received.
-    ServerMessage(ServerMessage),
+    ServerMessage(ServerMessage, Instant),
     /// Server reader thread exited (connection lost).
     ServerDisconnected,
     /// Timer tick.
@@ -1362,6 +1362,8 @@ async fn run_client_loop(
 
     // Main event loop.
     let mut pending_scroll = None::<Instant>;
+    #[cfg(unix)]
+    let mut last_scroll_input = None::<Instant>;
     while !should_quit.load(Ordering::Acquire) {
         let event = tokio::select! {
             ev = event_rx.recv() => ev.unwrap_or(ClientLoopEvent::Timer),
@@ -1370,7 +1372,7 @@ async fn run_client_loop(
 
         match event {
             #[cfg(unix)]
-            ClientLoopEvent::StdinInput(data) => {
+            ClientLoopEvent::StdinInput(data, received_at) => {
                 let data = if let Some(attach_escape) = &mut state.attach_escape {
                     match attach_escape.filter_input(
                         data,
@@ -1386,7 +1388,11 @@ async fn run_client_loop(
                             row,
                             modifiers,
                         } => {
-                            pending_scroll.get_or_insert_with(Instant::now);
+                            record_scroll_input(
+                                received_at,
+                                &mut pending_scroll,
+                                &mut last_scroll_input,
+                            );
                             let msg = ClientMessage::AttachScroll {
                                 source,
                                 direction,
@@ -1413,7 +1419,11 @@ async fn run_client_loop(
                         crate::raw_input::RawInputEvent::Mouse(mouse)
                             if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown)
                     )) {
-                        pending_scroll.get_or_insert_with(Instant::now);
+                        record_scroll_input(
+                            received_at,
+                            &mut pending_scroll,
+                            &mut last_scroll_input,
+                        );
                     }
                     if crate::raw_input::events_require_host_surface_redraw(
                         &events,
@@ -1517,7 +1527,7 @@ async fn run_client_loop(
                     return Err(ClientError::ConnectionLost(e));
                 }
             }
-            ClientLoopEvent::ServerMessage(msg) => match msg {
+            ClientLoopEvent::ServerMessage(msg, received_at) => match msg {
                 ServerMessage::Frame(frame_data) => {
                     let frame_started = Instant::now();
                     let frame_data = if state.draw_host_cursor {
@@ -1543,6 +1553,13 @@ async fn run_client_loop(
                     let _ = stdout.flush();
                     state.blit_encoder.commit(frame_data, encoded);
                     if let Some(started) = pending_scroll.take() {
+                        info!(
+                            event = "performance.scroll_frame",
+                            elapsed_ms = started.elapsed().as_millis() as u64,
+                            frame_queue_ms = received_at.elapsed().as_millis() as u64,
+                            encoding = "semantic",
+                            "first frame after scroll"
+                        );
                         crate::logging::slow_path(
                             "client.first_frame_after_scroll",
                             started.elapsed(),
@@ -1564,6 +1581,13 @@ async fn run_client_loop(
                     let _ = stdout.write_all(&frame.bytes);
                     let _ = stdout.flush();
                     if let Some(started) = pending_scroll.take() {
+                        info!(
+                            event = "performance.scroll_frame",
+                            elapsed_ms = started.elapsed().as_millis() as u64,
+                            frame_queue_ms = received_at.elapsed().as_millis() as u64,
+                            encoding = "ansi",
+                            "first frame after scroll"
+                        );
                         crate::logging::slow_path(
                             "client.first_frame_after_scroll",
                             started.elapsed(),
@@ -1685,7 +1709,7 @@ fn server_reader_thread(
         match protocol::read_message(&mut stream, max_frame_size) {
             Ok(msg) => {
                 if event_tx
-                    .blocking_send(ClientLoopEvent::ServerMessage(msg))
+                    .blocking_send(ClientLoopEvent::ServerMessage(msg, Instant::now()))
                     .is_err()
                 {
                     break; // Main loop gone.
@@ -1714,6 +1738,25 @@ fn server_reader_thread(
 // ---------------------------------------------------------------------------
 // Write helper
 // ---------------------------------------------------------------------------
+
+/// Records the time a wheel event spent waiting for the client event loop.
+#[cfg(unix)]
+fn record_scroll_input(
+    received_at: Instant,
+    pending_scroll: &mut Option<Instant>,
+    last_scroll_input: &mut Option<Instant>,
+) {
+    let gap_ms = last_scroll_input
+        .replace(received_at)
+        .map(|previous| received_at.saturating_duration_since(previous).as_millis() as u64);
+    pending_scroll.get_or_insert(received_at);
+    info!(
+        event = "performance.scroll_input",
+        input_queue_ms = received_at.elapsed().as_millis() as u64,
+        gap_ms,
+        "scroll input received by client"
+    );
+}
 
 /// Writes a message to the server stream (blocking).
 fn write_to_server(stream: &mut LocalStream, msg: &ClientMessage) -> io::Result<()> {

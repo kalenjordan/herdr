@@ -78,7 +78,7 @@ fn unix_stdin_reader_loop(
             Ok(n) => {
                 for data in framer.push(&scratch[..n]) {
                     if event_tx
-                        .blocking_send(ClientLoopEvent::StdinInput(data))
+                        .blocking_send(ClientLoopEvent::StdinInput(data, std::time::Instant::now()))
                         .is_err()
                     {
                         return;
@@ -95,7 +95,10 @@ fn unix_stdin_reader_loop(
                     let held_escape = had_pending && chunks.is_empty();
                     for data in chunks {
                         if event_tx
-                            .blocking_send(ClientLoopEvent::StdinInput(data))
+                            .blocking_send(ClientLoopEvent::StdinInput(
+                                data,
+                                std::time::Instant::now(),
+                            ))
                             .is_err()
                         {
                             return;
@@ -109,7 +112,10 @@ fn unix_stdin_reader_loop(
                     {
                         for data in framer.flush_timeout() {
                             if event_tx
-                                .blocking_send(ClientLoopEvent::StdinInput(data))
+                                .blocking_send(ClientLoopEvent::StdinInput(
+                                    data,
+                                    std::time::Instant::now(),
+                                ))
                                 .is_err()
                             {
                                 return;
@@ -388,9 +394,9 @@ mod tests {
     #[test]
     fn stdin_input_event_carries_raw_bytes() {
         let data = vec![0x1b, b'[', b'A']; // Up arrow escape sequence
-        let event = ClientLoopEvent::StdinInput(data.clone());
+        let event = ClientLoopEvent::StdinInput(data.clone(), std::time::Instant::now());
         match event {
-            ClientLoopEvent::StdinInput(d) => assert_eq!(d, data),
+            ClientLoopEvent::StdinInput(d, _) => assert_eq!(d, data),
             _ => panic!("expected StdinInput event"),
         }
     }
