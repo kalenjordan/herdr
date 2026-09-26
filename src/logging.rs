@@ -2,12 +2,26 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use tracing_subscriber::fmt::writer::MakeWriter;
 use tracing_subscriber::EnvFilter;
 
 const DEFAULT_MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
-const DEFAULT_RETAINED_LOG_FILES: usize = 0;
+const DEFAULT_RETAINED_LOG_FILES: usize = 2;
+pub(crate) const SLOW_SCROLL_PATH: Duration = Duration::from_millis(50);
+
+pub(crate) fn slow_path(stage: &'static str, elapsed: Duration, detail: &'static str) {
+    if elapsed >= SLOW_SCROLL_PATH {
+        tracing::warn!(
+            event = "performance.slow_path",
+            stage,
+            detail,
+            elapsed_ms = elapsed.as_millis() as u64,
+            "slow interaction path"
+        );
+    }
+}
 
 pub(crate) fn init_file_logging(file_name: &str) {
     let Ok(make_writer) = RotatingFileMakeWriter::new(

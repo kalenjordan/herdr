@@ -522,6 +522,7 @@ impl HeadlessServer {
 
             // 7. Render virtually and stream frames.
             if needs_render && self.app.can_render_now(now) {
+                let render_started = Instant::now();
                 crate::render_prof::event("render.attempt");
                 let pty_dirty = self.app.render_dirty.swap(false, Ordering::AcqRel);
                 if pty_dirty {
@@ -538,6 +539,15 @@ impl HeadlessServer {
                     crate::render_prof::event("full_render.invoke");
                     self.render_and_stream();
                 }
+                crate::logging::slow_path(
+                    "server.render_and_stream",
+                    render_started.elapsed(),
+                    if rendered_retained {
+                        "retained"
+                    } else {
+                        "full"
+                    },
+                );
                 self.app.last_render_at = Some(now);
                 needs_render = false;
                 needs_full_render = false;
@@ -2472,6 +2482,19 @@ impl HeadlessServer {
     }
 
     fn handle_server_event(&mut self, ev: ServerEvent) -> bool {
+        let detail = match &ev {
+            ServerEvent::ClientInput { .. } => "client_input",
+            ServerEvent::ClientInputEvents { .. } => "client_input_events",
+            ServerEvent::ClientAttachScroll { .. } => "attach_scroll",
+            _ => "other",
+        };
+        let started = Instant::now();
+        let changed = self.handle_server_event_inner(ev);
+        crate::logging::slow_path("server.handle_event", started.elapsed(), detail);
+        changed
+    }
+
+    fn handle_server_event_inner(&mut self, ev: ServerEvent) -> bool {
         if self.handoff_in_progress && Self::ignore_client_event_during_handoff(&ev) {
             return false;
         }

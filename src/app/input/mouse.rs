@@ -1566,6 +1566,16 @@ impl AppState {
         terminal_runtimes: &TerminalRuntimeRegistry,
         mouse: MouseEvent,
     ) {
+        let started = std::time::Instant::now();
+        self.handle_terminal_wheel_inner(terminal_runtimes, mouse);
+        crate::logging::slow_path("server.terminal_wheel", started.elapsed(), "wheel");
+    }
+
+    fn handle_terminal_wheel_inner(
+        &mut self,
+        terminal_runtimes: &TerminalRuntimeRegistry,
+        mouse: MouseEvent,
+    ) {
         let lines_per_notch = self.mouse_scroll_lines;
 
         if let Some(info) = self.pane_at(mouse.column, mouse.row).cloned() {

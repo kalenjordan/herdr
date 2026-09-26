@@ -18,15 +18,15 @@ use std::collections::HashSet;
 use std::io::{self, BufRead, Write as _};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 use crossterm::event::{
     DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
-    EnableFocusChange, EnableMouseCapture,
+    EnableFocusChange, EnableMouseCapture, MouseEventKind,
 };
 #[cfg(unix)]
-use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
 #[cfg(not(windows))]
 use crossterm::event::{PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags};
 use crossterm::execute;
@@ -1361,6 +1361,7 @@ async fn run_client_loop(
     let mut prefix_input_source = crate::platform::RealPrefixInputSource::default();
 
     // Main event loop.
+    let mut pending_scroll = None::<Instant>;
     while !should_quit.load(Ordering::Acquire) {
         let event = tokio::select! {
             ev = event_rx.recv() => ev.unwrap_or(ClientLoopEvent::Timer),
@@ -1385,6 +1386,7 @@ async fn run_client_loop(
                             row,
                             modifiers,
                         } => {
+                            pending_scroll.get_or_insert_with(Instant::now);
                             let msg = ClientMessage::AttachScroll {
                                 source,
                                 direction,
@@ -1406,6 +1408,13 @@ async fn run_client_loop(
                     }
                 } else {
                     let events = crate::raw_input::parse_raw_input_bytes_sync(&data);
+                    if events.iter().any(|event| matches!(
+                        event,
+                        crate::raw_input::RawInputEvent::Mouse(mouse)
+                            if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown)
+                    )) {
+                        pending_scroll.get_or_insert_with(Instant::now);
+                    }
                     if crate::raw_input::events_require_host_surface_redraw(
                         &events,
                         state.redraw_on_focus_gained,
@@ -1478,6 +1487,13 @@ async fn run_client_loop(
                     .iter()
                     .map(crate::protocol::ClientInputEvent::to_raw_input_event)
                     .collect::<Vec<_>>();
+                if raw_events.iter().any(|event| matches!(
+                    event,
+                    crate::raw_input::RawInputEvent::Mouse(mouse)
+                        if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown)
+                )) {
+                    pending_scroll.get_or_insert_with(Instant::now);
+                }
                 if crate::raw_input::events_require_host_surface_redraw(
                     &raw_events,
                     state.redraw_on_focus_gained,
@@ -1503,6 +1519,7 @@ async fn run_client_loop(
             }
             ClientLoopEvent::ServerMessage(msg) => match msg {
                 ServerMessage::Frame(frame_data) => {
+                    let frame_started = Instant::now();
                     let frame_data = if state.draw_host_cursor {
                         render_ansi::frame_with_drawn_cursor(frame_data)
                     } else {
@@ -1525,14 +1542,39 @@ async fn run_client_loop(
                         write_encoded_frame_with_graphics(&mut stdout, &encoded.bytes, graphics);
                     let _ = stdout.flush();
                     state.blit_encoder.commit(frame_data, encoded);
+                    if let Some(started) = pending_scroll.take() {
+                        crate::logging::slow_path(
+                            "client.first_frame_after_scroll",
+                            started.elapsed(),
+                            "semantic",
+                        );
+                    }
+                    crate::logging::slow_path(
+                        "client.frame_output",
+                        frame_started.elapsed(),
+                        "semantic",
+                    );
                 }
                 ServerMessage::Terminal(frame) => {
+                    let frame_started = Instant::now();
                     if state.kitty_graphics_enabled && contains_kitty_graphics_bytes(&frame.bytes) {
                         record_received_kitty_graphics(&frame.bytes);
                     }
                     let mut stdout = io::stdout();
                     let _ = stdout.write_all(&frame.bytes);
                     let _ = stdout.flush();
+                    if let Some(started) = pending_scroll.take() {
+                        crate::logging::slow_path(
+                            "client.first_frame_after_scroll",
+                            started.elapsed(),
+                            "ansi",
+                        );
+                    }
+                    crate::logging::slow_path(
+                        "client.frame_output",
+                        frame_started.elapsed(),
+                        "ansi",
+                    );
                 }
                 ServerMessage::Graphics { bytes } => {
                     if state.kitty_graphics_enabled {
@@ -1675,7 +1717,10 @@ fn server_reader_thread(
 
 /// Writes a message to the server stream (blocking).
 fn write_to_server(stream: &mut LocalStream, msg: &ClientMessage) -> io::Result<()> {
-    protocol::write_message(stream, msg).map_err(|e| io::Error::other(e.to_string()))
+    let started = Instant::now();
+    let result = protocol::write_message(stream, msg).map_err(|e| io::Error::other(e.to_string()));
+    crate::logging::slow_path("client.socket_write", started.elapsed(), "input_or_control");
+    result
 }
 
 // ---------------------------------------------------------------------------
