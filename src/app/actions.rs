@@ -2294,8 +2294,18 @@ impl AppState {
             .map_or(visible_text.len(), |idx| logical_cell.byte_index + idx);
         let line = visible_text.get(line_start..line_end)?;
         let cwd = rt.foreground_cwd().or_else(|| rt.cwd());
-        let (start_col, end_col, uri, plugin_eligible) =
-            clickable_target_at_column(line, logical_cell.logical_col, cwd.as_deref())?;
+        let Some((start_col, end_col, uri, plugin_eligible)) =
+            clickable_target_at_column(line, logical_cell.logical_col, cwd.as_deref())
+        else {
+            return hard_wrapped_path_target(
+                &visible_text,
+                logical_cell.byte_index,
+                info.inner_rect.width,
+                cwd.as_deref(),
+                pane_id,
+                metrics,
+            );
+        };
         let cells = visible_text_cells(&visible_text, info.inner_rect.width);
         let mut span_cells = cells.iter().filter(|cell| {
             cell.byte_index >= line_start
@@ -2534,6 +2544,102 @@ fn clickable_target_at_column(
     std::fs::metadata(&path_span.path).ok()?;
     let (start_col, end_col) = path_span.span.columns(&cells);
     Some((start_col, end_col, path_span.uri, false))
+}
+
+// Codex can insert a hard newline and indentation inside a long displayed path.
+// Rejoin only adjacent lines around the click, and only when the joined path exists.
+fn hard_wrapped_path_target(
+    text: &str,
+    clicked_byte: usize,
+    pane_width: u16,
+    cwd: Option<&Path>,
+    pane_id: crate::layout::PaneId,
+    metrics: Option<crate::pane::ScrollMetrics>,
+) -> Option<PaneClickableTarget> {
+    let mut lines = Vec::new();
+    let mut start = 0;
+    for (index, _) in text.match_indices('\n') {
+        lines.push((start, index));
+        start = index + 1;
+    }
+    lines.push((start, text.len()));
+    let clicked_line = lines
+        .iter()
+        .position(|&(start, end)| start <= clicked_byte && clicked_byte < end)?;
+    let cells = visible_text_cells(text, pane_width);
+
+    for first_line in [clicked_line.checked_sub(1), Some(clicked_line)]
+        .into_iter()
+        .flatten()
+    {
+        let Some(&(first_start, first_end)) = lines.get(first_line) else {
+            continue;
+        };
+        let Some(&(second_start, second_end)) = lines.get(first_line + 1) else {
+            continue;
+        };
+        let first = &text[first_start..first_end];
+        let second = &text[second_start..second_end];
+        let continuation = second.trim_start_matches([' ', '\t']);
+        if first.trim_end().len() != first.len() || continuation.len() == second.len() {
+            continue;
+        }
+        let continuation_start = second_end - continuation.len();
+        let mut joined = String::with_capacity(first.len() + continuation.len());
+        joined.push_str(first);
+        joined.push_str(continuation);
+        let clicked_joined_byte = if clicked_byte < first_end {
+            clicked_byte - first_start
+        } else if clicked_byte >= continuation_start {
+            first.len() + clicked_byte - continuation_start
+        } else {
+            continue;
+        };
+        let clicked_col = joined[..clicked_joined_byte].chars().fold(0u16, |col, ch| {
+            col.saturating_add(UnicodeWidthChar::width(ch).unwrap_or(0) as u16)
+        });
+        let Some((start_col, end_col, uri, false)) =
+            clickable_target_at_column(&joined, clicked_col, cwd)
+        else {
+            continue;
+        };
+        let joined_cells = text_cells(&joined);
+        let (Some(start_idx), Some(end_idx)) = (
+            cell_index_at_column(&joined_cells, start_col),
+            cell_index_at_column(&joined_cells, end_col),
+        ) else {
+            continue;
+        };
+        let start_byte = byte_index_for_cell(&joined, start_idx);
+        let end_byte = byte_index_for_cell(&joined, end_idx);
+        if start_byte >= first.len() || end_byte < first.len() {
+            continue;
+        }
+        let first_cell = cells
+            .iter()
+            .find(|cell| cell.byte_index == first_start + start_byte)?;
+        let last_cell = cells
+            .iter()
+            .find(|cell| cell.byte_index == continuation_start + end_byte - first.len())?;
+        let last_width = UnicodeWidthChar::width(last_cell.ch).unwrap_or(0) as u16;
+        let mut selection = Selection::viewport_range(
+            pane_id,
+            first_cell.screen_row,
+            first_cell.screen_col,
+            last_cell.screen_row,
+            last_cell
+                .screen_col
+                .saturating_add(last_width.saturating_sub(1)),
+            metrics,
+        );
+        selection.finish();
+        return Some(PaneClickableTarget {
+            uri,
+            selection,
+            plugin_eligible: false,
+        });
+    }
+    None
 }
 
 // An unquoted path in prose can contain spaces. Resolve its longest existing

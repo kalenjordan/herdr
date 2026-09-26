@@ -881,6 +881,43 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn pane_cell_clickable_target_joins_indented_hard_wrapped_audio_path() {
+        let dir = std::env::temp_dir().join(format!("hchardwrap{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let file = dir.join("dronecapable-v3-question-preview.wav");
+        std::fs::write(&file, b"audio").expect("write file");
+        let prefix = file.to_string_lossy().replace("preview.wav", "");
+        let screen = format!(
+            "Here’s your exact UI generation (/tmp/sample.mp3) and a phone quality preview using those settings ({prefix}\r\n  preview.wav) with the pipeline wording."
+        );
+        let (app, info) = app_with_screen_bytes(screen.as_bytes());
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+
+        let visible = screen.replace("\r\n", "\n");
+        for click in ["question-", "preview.wav"] {
+            let byte_index = visible.find(click).expect("click text");
+            let cell = crate::app::actions::visible_text_cells(&visible, info.inner_rect.width)
+                .into_iter()
+                .find(|cell| cell.byte_index == byte_index)
+                .expect("click cell");
+            let target = app
+                .state
+                .clickable_target_at_pane_cell(
+                    &app.terminal_runtimes,
+                    pane_id,
+                    cell.screen_row,
+                    cell.screen_col,
+                )
+                .expect("hard-wrapped audio path target");
+            assert_eq!(target.uri, format!("file://{}", file.display()));
+            let ((start_row, _), (end_row, _)) = target.selection.ordered_cells();
+            assert!(end_row > start_row);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn pane_cell_clickable_target_handles_wide_character_at_wrap() {
         let dir = std::env::temp_dir().join(format!("hcwide{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("create temp dir");
