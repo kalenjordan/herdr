@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
+import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -146,6 +147,52 @@ for (const integration of integrations) {
     expect(reportedState()).toBe("working");
   });
 }
+
+test("Codex session hook reports to the sole live pane in its directory", async () => {
+  const recordingSocketPath = join(tmpdir(), `herdr-codex-live-pane-${process.pid}.sock`);
+  socketPath = recordingSocketPath;
+  await rm(recordingSocketPath, { force: true });
+  const reportedPanes: string[] = [];
+  let claimedByAnotherSession = false;
+  server = createServer((socket) => {
+    let input = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => {
+      input += chunk;
+      const newline = input.indexOf("\n");
+      if (newline < 0) return;
+      const request = JSON.parse(input.slice(0, newline));
+      if (request.method === "pane.list") {
+        socket.end(JSON.stringify({ result: { panes: [
+          { pane_id: "old:p1", cwd: "/elsewhere", agent: "codex" },
+          { pane_id: "live:p1", cwd: "/project", agent: "codex",
+            ...(claimedByAnotherSession ? { agent_session: { kind: "id", value: "another-session" } } : {}) },
+        ] } }) + "\n");
+      } else {
+        reportedPanes.push(request.params.pane_id);
+        socket.end('{"result":{"type":"ok"}}\n');
+      }
+    });
+  });
+  await new Promise<void>((resolve) => server?.listen(recordingSocketPath, resolve));
+  const child = spawn("sh", [join(import.meta.dir, "codex/herdr-agent-state.sh"), "session"], {
+    env: { ...process.env, HERDR_ENV: "1", HERDR_PANE_ID: "old:p1", HERDR_SOCKET_PATH: recordingSocketPath },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  child.stdin.end(JSON.stringify({ hook_event_name: "SessionStart", session_id: "codex-session", cwd: "/project" }));
+  const exitCode = await new Promise<number | null>((resolve) => child.on("close", resolve));
+  expect(exitCode).toBe(0);
+  expect(reportedPanes).toEqual(["live:p1"]);
+
+  claimedByAnotherSession = true;
+  const otherChild = spawn("sh", [join(import.meta.dir, "codex/herdr-agent-state.sh"), "session"], {
+    env: { ...process.env, HERDR_ENV: "1", HERDR_PANE_ID: "old:p1", HERDR_SOCKET_PATH: recordingSocketPath },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  otherChild.stdin.end(JSON.stringify({ hook_event_name: "SessionStart", session_id: "codex-session", cwd: "/project" }));
+  expect(await new Promise<number | null>((resolve) => otherChild.on("close", resolve))).toBe(0);
+  expect(reportedPanes).toEqual(["live:p1"]);
+});
 
 test("Pi reports the session replacement source", async () => {
   const requests = await startRecordingServer("pi-session-source");

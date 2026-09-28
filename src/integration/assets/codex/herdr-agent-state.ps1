@@ -2,7 +2,7 @@
 # managed by herdr; reinstalling or updating the integration overwrites this file.
 # add custom hooks beside this file instead of editing it.
 # HERDR_INTEGRATION_ID=codex
-# HERDR_INTEGRATION_VERSION=6
+# HERDR_INTEGRATION_VERSION=7
 
 param([string]$Action = "")
 
@@ -22,12 +22,31 @@ if ($payload.hook_event_name -and $payload.hook_event_name -ne "SessionStart") {
 $sessionId = $payload.session_id
 if ([string]::IsNullOrWhiteSpace($sessionId)) { exit 0 }
 
+$cwd = if ($payload.cwd -is [string] -and $payload.cwd) { $payload.cwd } else { (Get-Location).Path }
+try {
+    $paneList = & herdr pane list 2>$null | ConvertFrom-Json
+    $existing = @($paneList.result.panes | Where-Object {
+        $_.agent_session.kind -eq "id" -and $_.agent_session.value -eq $sessionId
+    })
+    if ($existing.Count -eq 1) {
+        $livePaneId = $existing[0].pane_id
+    } else {
+        $matches = @($paneList.result.panes | Where-Object {
+            $_.agent -eq "codex" -and !$_.agent_session -and ($_.cwd -eq $cwd -or $_.foreground_cwd -eq $cwd)
+        })
+        if ($matches.Count -ne 1) { exit 0 }
+        $livePaneId = $matches[0].pane_id
+    }
+} catch {
+    exit 0
+}
+
 $seq = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 try {
     $args = @(
         "pane",
         "report-agent-session",
-        $env:HERDR_PANE_ID,
+        $livePaneId,
         "--source",
         "herdr:codex",
         "--agent",
