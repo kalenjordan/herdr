@@ -194,6 +194,52 @@ test("Codex session hook reports to the sole live pane in its directory", async 
   expect(reportedPanes).toEqual(["live:p1"]);
 });
 
+test("Codex clear claims the focused numeric tab with a stale session", async () => {
+  const recordingSocketPath = join(tmpdir(), `herdr-codex-clear-${process.pid}.sock`);
+  socketPath = recordingSocketPath;
+  await rm(recordingSocketPath, { force: true });
+  const reportedPanes: string[] = [];
+  let focused = true;
+  server = createServer((socket) => {
+    let input = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => {
+      input += chunk;
+      const newline = input.indexOf("\n");
+      if (newline < 0) return;
+      const request = JSON.parse(input.slice(0, newline));
+      if (request.method === "pane.list") {
+        socket.end(JSON.stringify({ result: { panes: [
+          { pane_id: "live:p1", tab_id: "live:t1", cwd: "/project", agent: "codex", focused,
+            agent_session: { kind: "id", value: "old-session" } },
+          { pane_id: "other:p1", tab_id: "other:t1", cwd: "/project", agent: "codex", focused: false,
+            agent_session: { kind: "id", value: "other-session" } },
+        ] } }) + "\n");
+      } else if (request.method === "tab.get") {
+        socket.end('{"result":{"tab":{"label":"101"}}}\n');
+      } else {
+        reportedPanes.push(request.params.pane_id);
+        socket.end('{"result":{"type":"ok"}}\n');
+      }
+    });
+  });
+  await new Promise<void>((resolve) => server?.listen(recordingSocketPath, resolve));
+  const runHook = async () => {
+    const child = spawn("sh", [join(import.meta.dir, "codex/herdr-agent-state.sh"), "session"], {
+      env: { ...process.env, HERDR_ENV: "1", HERDR_PANE_ID: "live:p1", HERDR_SOCKET_PATH: recordingSocketPath },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    child.stdin.end(JSON.stringify({ hook_event_name: "SessionStart", source: "clear",
+      session_id: "new-session", cwd: "/project" }));
+    expect(await new Promise<number | null>((resolve) => child.on("close", resolve))).toBe(0);
+  };
+  await runHook();
+  expect(reportedPanes).toEqual(["live:p1"]);
+  focused = false;
+  await runHook();
+  expect(reportedPanes).toEqual(["live:p1"]);
+});
+
 test("Pi reports the session replacement source", async () => {
   const requests = await startRecordingServer("pi-session-source");
   const { handlers, pi } = createExtensionHarness();

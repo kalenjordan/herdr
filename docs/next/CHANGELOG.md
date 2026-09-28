@@ -12,6 +12,7 @@
 - Added tab-aware switchers: `cmd+e` cycles recently used tabs and `cmd+d` cycles tabs containing done or blocked agents, switching when Command is released.
 
 ### Fixed
+- Codex tab naming now recovers the new session after `/clear` when the previous session ID remains attached to the focused pane.
 - Mouse wheel events now reach terminal apps that request mouse reporting, including panes preserved through a live handoff.
 - Pane scrolling no longer scans visible plain-text URLs and file paths on every redraw; double-click and modified-click still resolve them when selected. Double-clicking a file path with spaces, including one that soft-wraps across screen rows, now opens the full path and highlights its complete span.
 - `herdr --remote` now installs remote helper binaries without routing the binary stream through a multiline `/bin/sh -c` command, fixing installs for non-POSIX login shells such as xonsh. (#1203, thanks @nhumrich)

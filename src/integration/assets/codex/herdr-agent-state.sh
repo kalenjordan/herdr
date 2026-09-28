@@ -144,6 +144,15 @@ def live_pane_id():
                 matches.append(pane.get("pane_id"))
     if len(matches) == 1:
         return matches[0]
+    if session_start_source == "clear":
+        inherited = next((pane for pane in candidates
+                          if pane.get("pane_id") == pane_id and pane.get("focused") is True), None)
+        if inherited:
+            tab_id = inherited.get("tab_id")
+            tab = request("tab.get", {"tab_id": tab_id}) if isinstance(tab_id, str) else None
+            label = (tab or {}).get("result", {}).get("tab", {}).get("label")
+            if isinstance(label, str) and label.isdigit():
+                return pane_id
     unclaimed = [pane.get("pane_id") for pane in candidates if not pane.get("agent_session")]
     return unclaimed[0] if len(candidates) == 1 and len(unclaimed) == 1 else None
 
