@@ -194,7 +194,7 @@ test("Codex session hook reports to the sole live pane in its directory", async 
   expect(reportedPanes).toEqual(["live:p1"]);
 });
 
-test("Codex clear claims its inherited pane after focus changes", async () => {
+test("Codex clear claims the focused numeric tab despite a stale inherited pane", async () => {
   const recordingSocketPath = join(tmpdir(), `herdr-codex-clear-${process.pid}.sock`);
   socketPath = recordingSocketPath;
   await rm(recordingSocketPath, { force: true });
@@ -215,6 +215,8 @@ test("Codex clear claims its inherited pane after focus changes", async () => {
           { pane_id: "other:p1", tab_id: "other:t1", cwd: "/project", agent: "codex", focused: false,
             agent_session: { kind: "id", value: "other-session" } },
         ] } }) + "\n");
+      } else if (request.method === "tab.get") {
+        socket.end('{"result":{"tab":{"label":"5"}}}\n');
       } else {
         reportedPanes.push(request.params.pane_id);
         socket.end('{"result":{"type":"ok"}}\n');
@@ -224,7 +226,7 @@ test("Codex clear claims its inherited pane after focus changes", async () => {
   await new Promise<void>((resolve) => server?.listen(recordingSocketPath, resolve));
   const runHook = async () => {
     const child = spawn("sh", [join(import.meta.dir, "codex/herdr-agent-state.sh"), "session"], {
-      env: { ...process.env, HERDR_ENV: "1", HERDR_PANE_ID: "live:p1", HERDR_SOCKET_PATH: recordingSocketPath },
+      env: { ...process.env, HERDR_ENV: "1", HERDR_PANE_ID: "other:p1", HERDR_SOCKET_PATH: recordingSocketPath },
       stdio: ["pipe", "pipe", "pipe"],
     });
     child.stdin.end(JSON.stringify({ hook_event_name: "SessionStart", source: "clear",
@@ -235,7 +237,7 @@ test("Codex clear claims its inherited pane after focus changes", async () => {
   expect(reportedPanes).toEqual(["live:p1"]);
   focused = false;
   await runHook();
-  expect(reportedPanes).toEqual(["live:p1", "live:p1"]);
+  expect(reportedPanes).toEqual(["live:p1"]);
 });
 
 test("Pi reports the session replacement source", async () => {
