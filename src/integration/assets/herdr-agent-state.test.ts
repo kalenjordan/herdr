@@ -194,7 +194,7 @@ test("Codex session hook reports to the sole live pane in its directory", async 
   expect(reportedPanes).toEqual(["live:p1"]);
 });
 
-test("Codex clear claims the focused numeric tab with a stale session", async () => {
+test("Codex clear claims its inherited pane after focus changes", async () => {
   const recordingSocketPath = join(tmpdir(), `herdr-codex-clear-${process.pid}.sock`);
   socketPath = recordingSocketPath;
   await rm(recordingSocketPath, { force: true });
@@ -215,8 +215,6 @@ test("Codex clear claims the focused numeric tab with a stale session", async ()
           { pane_id: "other:p1", tab_id: "other:t1", cwd: "/project", agent: "codex", focused: false,
             agent_session: { kind: "id", value: "other-session" } },
         ] } }) + "\n");
-      } else if (request.method === "tab.get") {
-        socket.end('{"result":{"tab":{"label":"101"}}}\n');
       } else {
         reportedPanes.push(request.params.pane_id);
         socket.end('{"result":{"type":"ok"}}\n');
@@ -237,7 +235,7 @@ test("Codex clear claims the focused numeric tab with a stale session", async ()
   expect(reportedPanes).toEqual(["live:p1"]);
   focused = false;
   await runHook();
-  expect(reportedPanes).toEqual(["live:p1"]);
+  expect(reportedPanes).toEqual(["live:p1", "live:p1"]);
 });
 
 test("Pi reports the session replacement source", async () => {
