@@ -79,9 +79,9 @@ fn context_usage_label(used: u8) -> String {
 }
 
 fn context_usage_color(used: u8, palette: &crate::app::state::Palette) -> ratatui::style::Color {
-    if used > 50 {
+    if used > 70 {
         palette.red
-    } else if used > 35 {
+    } else if used > 50 {
         palette.peach
     } else {
         palette.overlay1
@@ -739,10 +739,10 @@ mod tests {
     #[test]
     fn context_usage_color_uses_warning_and_critical_thresholds() {
         let app = AppState::test_new();
-        assert_eq!(context_usage_color(35, &app.palette), app.palette.overlay1);
-        assert_eq!(context_usage_color(36, &app.palette), app.palette.peach);
-        assert_eq!(context_usage_color(50, &app.palette), app.palette.peach);
-        assert_eq!(context_usage_color(51, &app.palette), app.palette.red);
+        assert_eq!(context_usage_color(50, &app.palette), app.palette.overlay1);
+        assert_eq!(context_usage_color(51, &app.palette), app.palette.peach);
+        assert_eq!(context_usage_color(70, &app.palette), app.palette.peach);
+        assert_eq!(context_usage_color(71, &app.palette), app.palette.red);
     }
 
     #[test]
