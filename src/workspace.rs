@@ -1070,6 +1070,25 @@ impl Workspace {
             .or_else(|| Some(self.identity_cwd.clone()))
     }
 
+    /// Git presentation follows the selected tab without changing workspace identity.
+    pub fn resolved_git_status_cwd_from(
+        &self,
+        terminals: &HashMap<TerminalId, TerminalState>,
+        terminal_runtimes: &TerminalRuntimeRegistry,
+    ) -> Option<PathBuf> {
+        let cwd = self
+            .active_tab()
+            .and_then(|tab| tab.cwd_for_pane(tab.root_pane, terminals, terminal_runtimes))
+            .or_else(|| self.resolved_identity_cwd_from(terminals, terminal_runtimes))?;
+        let checkout = self
+            .active_tab()
+            .and_then(|tab| tab.terminal_id(tab.root_pane))
+            .and_then(|id| terminals.get(id))
+            .and_then(|terminal| terminal.codex_session_id())
+            .and_then(|session| crate::codex_checkout::load_checkout(session, &cwd));
+        Some(checkout.unwrap_or(cwd))
+    }
+
     pub fn display_name(&self) -> String {
         if let Some(name) = &self.custom_name {
             return name.clone();
@@ -1614,6 +1633,32 @@ mod tests {
             ws.resolved_identity_cwd_from(&terminals, &terminal_runtimes),
             Some(PathBuf::from("/herdr-test/pion"))
         );
+    }
+
+    #[test]
+    fn git_status_follows_active_tab_without_changing_workspace_identity() {
+        let mut ws = Workspace::test_adversarial_identity_state();
+        let mut terminals = HashMap::new();
+        for (index, tab) in ws.tabs.iter().enumerate() {
+            let id = tab.terminal_id(tab.root_pane).unwrap().clone();
+            terminals.insert(
+                id.clone(),
+                TerminalState::new(id, PathBuf::from(format!("/checkout/{index}"))),
+            );
+        }
+        let runtimes = TerminalRuntimeRegistry::new();
+        for index in 0..ws.tabs.len() {
+            ws.switch_tab(index);
+            assert_eq!(
+                ws.resolved_git_status_cwd_from(&terminals, &runtimes),
+                Some(PathBuf::from(format!("/checkout/{index}")))
+            );
+            assert_eq!(
+                ws.resolved_identity_cwd_from(&terminals, &runtimes),
+                Some(PathBuf::from("/checkout/0"))
+            );
+            ws.assert_invariants_for_test();
+        }
     }
 
     #[test]

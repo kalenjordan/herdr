@@ -3202,13 +3202,24 @@ impl AppState {
             };
 
             if self.workspaces[ws_idx]
-                .resolved_identity_cwd_from(&self.terminals, terminal_runtimes)
+                .resolved_git_status_cwd_from(&self.terminals, terminal_runtimes)
                 .as_ref()
                 != Some(&result.resolved_identity_cwd)
             {
                 continue;
             }
 
+            // Repository organization stays anchored to workspace identity even when
+            // the displayed Git status comes from another tab's checkout.
+            let identity_cwd = self.workspaces[ws_idx]
+                .resolved_identity_cwd_from(&self.terminals, terminal_runtimes);
+            let space = if identity_cwd.as_ref() == Some(&result.resolved_identity_cwd) {
+                result.space
+            } else {
+                identity_cwd
+                    .as_deref()
+                    .and_then(crate::workspace::git_space_metadata)
+            };
             let ws = &mut self.workspaces[ws_idx];
             if ws.cached_git_branch != result.branch {
                 ws.cached_git_branch = result.branch;
@@ -3222,8 +3233,8 @@ impl AppState {
                 ws.cached_git_dirty_count = result.dirty_count;
                 changed = true;
             }
-            if ws.cached_git_space != result.space {
-                ws.cached_git_space = result.space;
+            if ws.cached_git_space != space {
+                ws.cached_git_space = space;
                 changed = true;
             }
         }
@@ -4636,6 +4647,34 @@ mod tests {
         assert!(!changed);
         assert_eq!(state.workspaces[0].branch().as_deref(), Some("old"));
         assert_eq!(state.workspaces[0].git_ahead_behind(), Some((1, 0)));
+    }
+
+    #[test]
+    fn apply_workspace_git_statuses_rejects_previous_tab_checkout() {
+        let mut state = app_with_workspaces(&["one"]);
+        let old_cwd = state.workspaces[0].resolved_identity_cwd().unwrap();
+        let tab_index = state.workspaces[0].test_add_tab(None);
+        let tab = &state.workspaces[0].tabs[tab_index];
+        let terminal_id = tab.terminal_id(tab.root_pane).unwrap().clone();
+        let worktree_cwd = std::path::PathBuf::from("/linked/worktree");
+        state.terminals.insert(
+            terminal_id.clone(),
+            crate::terminal::TerminalState::new(terminal_id, worktree_cwd.clone()),
+        );
+        state.workspaces[0].switch_tab(tab_index);
+        let runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+        let workspace_id = state.workspaces[0].id.clone();
+        let result = |cwd, count| WorkspaceGitStatus {
+            workspace_id: workspace_id.clone(),
+            resolved_identity_cwd: cwd,
+            branch: Some("worktree".into()),
+            ahead_behind: None,
+            dirty_count: Some(count),
+            space: None,
+        };
+        assert!(!state.apply_workspace_git_statuses(&runtimes, vec![result(old_cwd, 18)]));
+        assert!(state.apply_workspace_git_statuses(&runtimes, vec![result(worktree_cwd, 0)]));
+        assert_eq!(state.workspaces[0].git_dirty_count(), Some(0));
     }
 
     #[test]

@@ -831,6 +831,9 @@ impl App {
         }
 
         self.last_focus = current_focus;
+        // Refresh the selected checkout immediately, including a follow-up when
+        // the previous checkout's refresh is still in flight.
+        self.mark_git_status_refresh_due(Instant::now());
         self.refresh_context_usage();
         self.next_context_usage_refresh = Instant::now() + CONTEXT_USAGE_REFRESH_INTERVAL;
         true
@@ -1347,6 +1350,37 @@ mod tests {
             Some(64),
             "switching to a pane with an already-reported percentage should reflect it immediately, not wait for the periodic refresh"
         );
+    }
+
+    #[test]
+    fn sync_focus_events_requests_git_refresh_on_tab_selection() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new("focus")];
+        let second_tab = app.state.workspaces[0].test_add_tab(None);
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.workspaces[0].switch_tab(0);
+        assert!(app.sync_focus_events());
+
+        app.last_git_remote_status_refresh = Instant::now();
+        assert!(!app.sync_focus_events());
+        assert!(app.git_refresh_deadline().unwrap() > Instant::now());
+
+        app.state.workspaces[0].switch_tab(second_tab);
+        assert!(app.sync_focus_events());
+        assert!(app.git_refresh_deadline().unwrap() <= Instant::now());
+
+        app.git_refresh_in_flight = true;
+        app.state.workspaces[0].switch_tab(0);
+        assert!(app.sync_focus_events());
+        assert!(app.git_refresh_due_after_in_flight);
     }
 
     #[tokio::test]

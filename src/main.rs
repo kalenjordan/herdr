@@ -62,6 +62,7 @@ mod build_info;
 mod checksum;
 mod cli;
 mod client;
+mod codex_checkout;
 mod codex_usage;
 mod config;
 mod detect;
