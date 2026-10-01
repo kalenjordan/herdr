@@ -255,6 +255,7 @@ impl App {
     }
 
     pub(super) fn handle_mouse(&mut self, mouse: MouseEvent) {
+        self.state.mouse_position = Some(ratatui::layout::Position::new(mouse.column, mouse.row));
         if self.handle_overlay_mouse(mouse) {
             return;
         }
@@ -277,6 +278,19 @@ impl App {
                 self.state.drag = None;
                 return;
             }
+        }
+
+        if matches!(self.state.mode, Mode::Terminal | Mode::Resize)
+            && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+            && crate::ui::recent_reply_url_rect(&self.state)
+                .contains(ratatui::layout::Position::new(mouse.column, mouse.row))
+        {
+            if let Some(url) = self.state.recent_reply_url.as_deref() {
+                if let Err(err) = crate::platform::open_url(url) {
+                    tracing::warn!(%err, "failed to open recent app URL");
+                }
+            }
+            return;
         }
 
         if self.handle_modified_url_click(mouse) {

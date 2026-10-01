@@ -5,6 +5,7 @@
 - Added agent-requested clipboard secret entry with `herdr secret request`, allowing Herdr to update a workspace `.env`, `.env.*`, or `.dev.vars` file without sending the value through the pane or API response.
 
 ### Added
+- The desktop tab row now links to the latest local or preview app URL in the focused Codex session’s replies, beside the repository dirty count.
 - Added a configurable project picker that searches open workspaces and repositories, focuses existing workspaces, and starts an agent in newly opened repositories.
 - Added `herdr codex rename-thread --current <name>` so agents can rename their own live Codex thread through a scoped slash-command injection into the calling pane.
 - Copy mode now supports literal smart-case search with `/` and `?`, repeating with `n` and `N`, match highlighting, and tmux-style cross-line `w`/`b`/`e` word motions. (#1230)

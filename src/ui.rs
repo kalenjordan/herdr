@@ -89,7 +89,7 @@ pub(crate) use self::{
         mobile_switcher_workspace_doc_range, MobileSwitcherTarget,
     },
     panes::{apply_pane_chrome, pane_inner_rect, pane_is_scrolled_back},
-    tabs::{compute_tab_bar_view, tab_content_rect_with_status},
+    tabs::{compute_tab_bar_view, recent_reply_url_rect, tab_content_rect_with_status},
     widgets::{centered_popup_rect, modal_stack_areas},
 };
 use crate::app::state::ViewLayout;
@@ -271,6 +271,7 @@ fn compute_view_internal(
                     ws,
                     &app.plugin_status_items,
                     app.context_used_percent,
+                    app.recent_reply_url.as_deref(),
                     tab_bar_rect,
                 ),
                 app.tab_scroll,

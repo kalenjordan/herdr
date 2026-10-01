@@ -6,6 +6,14 @@ use std::sync::{Mutex, OnceLock};
 
 const TRANSCRIPT_TAIL_BYTES: u64 = 1024 * 1024;
 const CODEX_BASELINE_TOKENS: u64 = 12_000;
+#[derive(Clone)]
+struct ReplyUrlCacheEntry {
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+    url: Option<String>,
+}
+
+static REPLY_URLS: OnceLock<Mutex<HashMap<PathBuf, ReplyUrlCacheEntry>>> = OnceLock::new();
 static SESSION_PATHS: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
 
 #[derive(Deserialize)]
@@ -39,6 +47,148 @@ pub(crate) fn load_context_used_percent(session_id: &str) -> Option<u8> {
     }
     let path = cached_session_path(session_id)?;
     read_latest_context_used(&path)
+}
+
+/// Derive a link for the focused session's status display from assistant replies.
+pub(crate) fn load_latest_reply_url(session_id: &str) -> Option<String> {
+    if !valid_session_id(session_id) {
+        return None;
+    }
+    let path = cached_session_path(session_id)?;
+    let metadata = std::fs::metadata(&path).ok()?;
+    let modified = metadata.modified().ok();
+    let cache = REPLY_URLS.get_or_init(|| Mutex::new(HashMap::new()));
+    let previous = cache
+        .lock()
+        .ok()
+        .and_then(|entries| entries.get(&path).cloned());
+    if let Some(entry) = previous.as_ref() {
+        if entry.len == metadata.len() && entry.modified == modified {
+            return entry.url.clone();
+        }
+    }
+    // Transcripts append. Scan new output with overlap for a previously partial record;
+    // scan from the beginning on the first read or after a truncation/rewrite.
+    let previous = previous.filter(|entry| entry.len < metadata.len());
+    let lower_bound = previous
+        .as_ref()
+        .map_or(0, |entry| entry.len.saturating_sub(TRANSCRIPT_TAIL_BYTES));
+    let url = read_latest_reply_url_since(&path, lower_bound)
+        .or_else(|| previous.and_then(|entry| entry.url));
+    if let Ok(mut entries) = cache.lock() {
+        entries.insert(
+            path,
+            ReplyUrlCacheEntry {
+                len: metadata.len(),
+                modified,
+                url: url.clone(),
+            },
+        );
+    }
+    url
+}
+
+/// Recognizable local hosts and common preview hostnames. No worktree lookup is needed.
+pub(crate) fn is_app_url(url: &str) -> bool {
+    let Some(rest) = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    if authority.contains('@') {
+        return false;
+    }
+    let host = if authority.starts_with('[') {
+        authority
+            .split(']')
+            .next()
+            .unwrap_or_default()
+            .trim_start_matches('[')
+    } else {
+        authority.split(':').next().unwrap_or_default()
+    }
+    .to_ascii_lowercase();
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return match ip {
+            std::net::IpAddr::V4(ip) => ip.is_loopback() || ip.is_private(),
+            std::net::IpAddr::V6(ip) => ip.is_loopback() || ip.is_unique_local(),
+        };
+    }
+    host == "localhost"
+        || [
+            ".localhost",
+            ".local",
+            ".test",
+            ".vercel.app",
+            ".netlify.app",
+            ".pages.dev",
+            ".trycloudflare.com",
+        ]
+        .iter()
+        .any(|suffix| host.ends_with(suffix))
+        || host
+            .split(['.', '-'])
+            .any(|part| matches!(part, "preview" | "sandbox" | "staging" | "dev"))
+}
+
+fn reply_url(line: &[u8]) -> Option<String> {
+    let record: serde_json::Value = serde_json::from_slice(line).ok()?;
+    let payload = &record["payload"];
+    if record["type"] == "response_item"
+        && payload["type"] == "message"
+        && payload["role"] == "assistant"
+    {
+        return payload["content"]
+            .as_array()?
+            .iter()
+            .rev()
+            .find_map(|part| {
+                if part["type"] != "output_text" {
+                    return None;
+                }
+                crate::app::actions::latest_app_url(part["text"].as_str()?).map(str::to_owned)
+            });
+    }
+    None
+}
+
+#[cfg(test)]
+fn read_latest_reply_url(path: &Path) -> Option<String> {
+    read_latest_reply_url_since(path, 0)
+}
+
+fn read_latest_reply_url_since(path: &Path, lower_bound: u64) -> Option<String> {
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut end = file.metadata().ok()?.len();
+    let mut remainder = Vec::new();
+    while end > lower_bound {
+        let start = end.saturating_sub(TRANSCRIPT_TAIL_BYTES).max(lower_bound);
+        file.seek(SeekFrom::Start(start)).ok()?;
+        let mut bytes = vec![0; (end - start) as usize];
+        file.read_exact(&mut bytes).ok()?;
+        bytes.extend_from_slice(&remainder);
+        let first_line = if start == 0 {
+            0
+        } else {
+            bytes
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map(|idx| idx + 1)
+                .unwrap_or(bytes.len())
+        };
+        if let Some(url) = bytes[first_line..]
+            .split(|byte| *byte == b'\n')
+            .rev()
+            .find_map(reply_url)
+        {
+            return Some(url);
+        }
+        remainder = bytes[..first_line].to_vec();
+        end = start;
+    }
+    None
 }
 
 fn cached_session_path(session_id: &str) -> Option<PathBuf> {
@@ -118,6 +268,73 @@ fn valid_session_id(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn app_urls_include_local_and_preview_hosts_but_exclude_reference_links() {
+        for url in [
+            "http://localhost:8766/a",
+            "http://outbound-dash.localhost:8766/a",
+            "http://127.0.0.1:3000",
+            "http://[::1]:3000",
+            "http://192.168.1.5:3000",
+            "https://sandbox.example.com/a",
+            "https://branch.preview.example.com",
+            "https://branch.vercel.app",
+        ] {
+            assert!(is_app_url(url), "{url}");
+        }
+        for url in [
+            "https://github.com/a",
+            "https://docs.example.com/preview",
+            "https://localhost.evil.com",
+            "https://myvercel.app",
+            "https://localhost@github.com",
+            "file:///tmp/test",
+        ] {
+            assert!(!is_app_url(url), "{url}");
+        }
+    }
+
+    #[test]
+    fn reply_urls_ignore_user_tool_and_reference_links_and_keep_last_app_link() {
+        let record = |role: &str, text: &str| {
+            serde_json::json!({
+                "type": "response_item", "payload": {"type": "message", "role": role,
+                "content": [{"type": "output_text", "text": text}]}
+            })
+            .to_string()
+        };
+        assert_eq!(
+            reply_url(record("user", "http://localhost:3000").as_bytes()),
+            None
+        );
+        assert_eq!(reply_url(br#"{"type":"response_item","payload":{"type":"function_call_output","output":"http://localhost:3000"}}"#), None);
+        assert_eq!(reply_url(record("assistant", "Open [app](http://outbound-dash.localhost:8766/clients/a?tab=one). See https://github.com/a.").as_bytes()), Some("http://outbound-dash.localhost:8766/clients/a?tab=one".into()));
+        assert_eq!(
+            reply_url(
+                record(
+                    "assistant",
+                    "http://localhost:3000/old then https://sandbox.example.com/new."
+                )
+                .as_bytes()
+            ),
+            Some("https://sandbox.example.com/new".into())
+        );
+        let path =
+            std::env::temp_dir().join(format!("codex-reply-url-{}.jsonl", std::process::id()));
+        let mut data = record("assistant", "[App](http://localhost:3000/a)");
+        data.push('\n');
+        data.push_str(&record("assistant", "See https://github.com/example/repo"));
+        data.push('\n');
+        // Make sure a later large tool result does not evict the last app link.
+        data.push_str(&serde_json::json!({"type":"response_item", "payload":{"type":"function_call_output", "output":"x".repeat(TRANSCRIPT_TAIL_BYTES as usize + 100)}}).to_string());
+        std::fs::write(&path, data).unwrap();
+        assert_eq!(
+            read_latest_reply_url(&path),
+            Some("http://localhost:3000/a".into())
+        );
+        let _ = std::fs::remove_file(path);
+    }
 
     #[test]
     fn session_ids_are_safe_path_components() {

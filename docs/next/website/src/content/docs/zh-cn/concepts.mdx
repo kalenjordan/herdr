@@ -17,6 +17,8 @@ Herdr 是一个终端工作区管理器。它让真实的终端进程持续运�
 
 标签页可以通过 CLI 和 socket API 寻址。
 
+在桌面端，标签栏会在仓库修改数量旁显示一个可点击链接，指向当前聚焦的 Codex 会话回复中最近的本地或预览应用 URL。后续回复没有应用 URL 时保留上一个链接；切换窗格时，链接跟随选中的会话。此功能读取本地 Codex 会话记录，无需配置工作树。本地主机包括 localhost、私有 IP 地址以及 `.localhost`、`.local` 或 `.test` 域名。预览主机包括含有 `preview`、`sandbox`、`staging` 或 `dev` 名称片段的域名，以及 `vercel.app`、`netlify.app`、`pages.dev` 和 `trycloudflare.com` 上的部署。普通 GitHub 和文档链接会被忽略。
+
 ## 窗格
 
 窗格是一个真实的终端。Herdr 渲染终端输出,把输入传回进程,并在客户端分离后保留窗格。

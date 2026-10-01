@@ -568,12 +568,12 @@ impl App {
                     .get(&terminal_id)
                     .map(|terminal| (terminal_id, terminal))
             });
-        let used = terminal.and_then(|(terminal_id, terminal)| {
+        let used = terminal.as_ref().and_then(|(terminal_id, terminal)| {
             if let Some(session_id) = terminal.codex_session_id() {
                 if self
                     .state
                     .suppressed_codex_context_sessions
-                    .get(&terminal_id)
+                    .get(terminal_id)
                     .is_some_and(|suppressed| suppressed == session_id)
                 {
                     return None;
@@ -583,11 +583,22 @@ impl App {
                 terminal.claude_context_used_percent()
             }
         });
-        if used == self.state.context_used_percent {
-            return false;
-        }
+        let url = terminal.and_then(|(terminal_id, terminal)| {
+            let session_id = terminal.codex_session_id()?;
+            if self
+                .state
+                .suppressed_codex_context_sessions
+                .get(&terminal_id)
+                .is_some_and(|suppressed| suppressed == session_id)
+            {
+                return None;
+            }
+            crate::codex_usage::load_latest_reply_url(session_id)
+        });
+        let changed = used != self.state.context_used_percent || url != self.state.recent_reply_url;
         self.state.context_used_percent = used;
-        true
+        self.state.recent_reply_url = url;
+        changed
     }
 
     pub(crate) fn mark_git_status_refresh_due(&mut self, now: Instant) {

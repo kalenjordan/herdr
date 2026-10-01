@@ -363,12 +363,14 @@ mod tests {
         let (mut app, _) = app_with_screen_bytes(b"");
         let terminal_id = set_focused_codex_session(&mut app, "old-session");
         app.state.context_used_percent = Some(64);
+        app.state.recent_reply_url = Some("http://localhost:3000/old".into());
         app.state.workspaces[0].tabs[0].set_custom_name("previous-task".into());
 
         type_terminal_text(&mut app, "/clear");
         app.handle_terminal_key_headless(TerminalKey::new(KeyCode::Enter, KeyModifiers::empty()));
 
         assert_eq!(app.state.context_used_percent, None);
+        assert_eq!(app.state.recent_reply_url, None);
         assert_eq!(
             app.state
                 .suppressed_codex_context_sessions

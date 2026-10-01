@@ -1720,6 +1720,7 @@ impl AppState {
                 ws,
                 &self.plugin_status_items,
                 self.context_used_percent,
+                self.recent_reply_url.as_deref(),
                 area,
             ),
             self.tab_scroll,
@@ -2478,6 +2479,17 @@ fn word_bounds_at_column(row: &str, col: u16) -> Option<(u16, u16)> {
 
     // Convert the internal cell span back to inclusive terminal columns.
     Some(span.columns(&cells))
+}
+
+/// Last web link in assistant text, using the same edge rules as pane links.
+pub(crate) fn latest_app_url(text: &str) -> Option<&str> {
+    let cells = text_cells(text);
+    url_spans(&cells).into_iter().rev().find_map(|span| {
+        let url = safe_web_url(
+            text.get(byte_index_for_cell(text, span.start)..byte_index_after_cell(text, span.end))?,
+        )?;
+        crate::codex_usage::is_app_url(url).then_some(url)
+    })
 }
 
 #[cfg(test)]
@@ -3363,6 +3375,7 @@ impl AppState {
                     })
                 {
                     self.context_used_percent = None;
+                    self.recent_reply_url = None;
                 }
                 update.into_iter().collect()
             }

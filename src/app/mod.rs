@@ -677,6 +677,8 @@ impl App {
             installed_plugins: load_plugin_registry(no_session),
             plugin_status_items: Vec::new(),
             context_used_percent: None,
+            recent_reply_url: None,
+            mouse_position: None,
             suppressed_codex_context_sessions: HashMap::new(),
             plugin_panes: std::collections::HashMap::new(),
             plugin_command_logs: Vec::new(),
