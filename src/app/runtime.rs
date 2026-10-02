@@ -543,7 +543,64 @@ impl App {
         true
     }
 
+    fn start_codex_session_recovery(&mut self) {
+        if self.codex_recovery_in_flight {
+            return;
+        }
+        let Some(report_seq) = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .and_then(|duration| u64::try_from(duration.as_nanos()).ok())
+        else {
+            return;
+        };
+        let mut targets = Vec::new();
+        for workspace in &self.state.workspaces {
+            for tab in &workspace.tabs {
+                for (pane_id, pane) in &tab.panes {
+                    let Some(terminal) = self.state.terminals.get(&pane.attached_terminal_id)
+                    else {
+                        continue;
+                    };
+                    if terminal.codex_session_id().is_some()
+                        || terminal.effective_known_agent() != Some(crate::detect::Agent::Codex)
+                    {
+                        continue;
+                    }
+                    let Some(runtime) = self.terminal_runtimes.get(&pane.attached_terminal_id)
+                    else {
+                        continue;
+                    };
+                    let Some(shell_pid) = runtime.child_pid() else {
+                        continue;
+                    };
+                    let title = crate::codex_recovery::current_title(runtime);
+                    if !title.is_empty() {
+                        targets.push(crate::codex_recovery::RecoveryTarget {
+                            pane_id: *pane_id,
+                            terminal_id: pane.attached_terminal_id.clone(),
+                            shell_pid,
+                            title,
+                            report_seq,
+                        });
+                    }
+                }
+            }
+        }
+        if targets.is_empty() {
+            return;
+        }
+        self.codex_recovery_in_flight = true;
+        let event_tx = self.event_tx.clone();
+        std::thread::spawn(move || {
+            let sessions = crate::codex_recovery::recover(targets);
+            let _ = event_tx.blocking_send(AppEvent::CodexSessionsRecovered { sessions });
+        });
+    }
+
     pub(crate) fn refresh_context_usage(&mut self) -> bool {
+        // Both the standalone app and headless server call this shared refresh.
+        self.start_codex_session_recovery();
         let terminals = &self.state.terminals;
         self.state
             .suppressed_codex_context_sessions

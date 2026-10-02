@@ -50,6 +50,7 @@ website-build:
 # Test bundled agent integration assets
 integration-assets-test:
     bun test src/integration/assets/herdr-agent-state.test.ts
+    python3 -m unittest scripts.test_codex_session_recovery
 
 # Run plugin marketplace Worker tests
 plugin-marketplace-test:

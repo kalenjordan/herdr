@@ -13,6 +13,8 @@
 - Added tab-aware switchers: `cmd+e` cycles recently used tabs and `cmd+d` cycles tabs containing done or blocked agents, switching when Command is released.
 
 ### Fixed
+- Live handoff preserves session metadata for multiple already-running panes attached to the same Codex session; cold-start duplicate launch protection stays enabled.
+- Resumed Codex sessions missing a pane hook report recover their identity from process-owned TUI evidence, so Git badges follow the active worktree instead of the terminal's launch directory.
 - The latest app link preserves Markdown link text from Codex replies, such as “Call Log,” and uses a lighter muted color.
 - Notification status uses muted monochrome bell and bell-off glyphs; the nudges indicator is hidden from the tab row.
 - Codex session hooks use verified process ancestry to associate worktree and delayed sessions with their owning pane. The last app URL follows unambiguous session forks and falls back to ancestor replies.

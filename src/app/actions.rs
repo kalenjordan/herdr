@@ -3353,6 +3353,7 @@ impl AppState {
                     .collect()
                 }
             }
+            AppEvent::CodexSessionsRecovered { .. } => Vec::new(),
             AppEvent::AgentSessionReported {
                 pane_id,
                 source,

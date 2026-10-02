@@ -63,6 +63,7 @@ mod checksum;
 mod cli;
 mod client;
 mod codex_checkout;
+mod codex_recovery;
 mod codex_usage;
 mod config;
 mod detect;

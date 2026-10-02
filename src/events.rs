@@ -54,6 +54,10 @@ pub struct WorktreeRemoveResult {
 /// An event from a background task to the main loop.
 #[derive(Debug)]
 pub enum AppEvent {
+    /// Background recovery finished; ownership must be rechecked before applying.
+    CodexSessionsRecovered {
+        sessions: Vec<crate::codex_recovery::RecoveredSession>,
+    },
     /// A pane's child process exited.
     PaneDied { pane_id: PaneId },
     /// Fallback detector state changed in a pane.

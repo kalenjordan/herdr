@@ -546,6 +546,7 @@ fn restore_tab(
             if let Some(session) = restored_terminal_agent_session(
                 saved_agent_session,
                 startup.duplicate_agent_session,
+                false,
             ) {
                 terminal.set_persisted_agent_session(session);
             }
@@ -639,6 +640,7 @@ fn restore_tab(
                 if let Some(session) = restored_terminal_agent_session(
                     saved_agent_session,
                     startup.duplicate_agent_session,
+                    was_imported,
                 ) {
                     terminal.set_persisted_agent_session(session);
                 }
@@ -789,8 +791,11 @@ fn persisted_agent_session_from_snapshot(
 fn restored_terminal_agent_session(
     session: Option<&PaneAgentSessionSnapshot>,
     duplicate_agent_session: bool,
+    runtime_imported: bool,
 ) -> Option<crate::agent_resume::PersistedAgentSession> {
-    if duplicate_agent_session {
+    // Cold restore suppresses duplicate launches. A live import reattaches
+    // existing terminals, which can legitimately share a Codex session.
+    if duplicate_agent_session && !runtime_imported {
         return None;
     }
     session.and_then(persisted_agent_session_from_snapshot)
@@ -1128,7 +1133,7 @@ mod tests {
             value: "hermes-session".into(),
         };
 
-        let preserved = restored_terminal_agent_session(Some(&session), false)
+        let preserved = restored_terminal_agent_session(Some(&session), false, false)
             .expect("restore should preserve metadata");
         assert_eq!(preserved.source, "herdr:hermes");
         assert_eq!(preserved.agent, "hermes");
@@ -1147,7 +1152,23 @@ mod tests {
         assert!(take_restore_plan_for_snapshot(&session, true, &mut resumed).is_some());
         assert!(take_restore_plan_for_snapshot(&session, true, &mut resumed).is_none());
 
-        assert!(restored_terminal_agent_session(Some(&session), true).is_none());
+        assert!(restored_terminal_agent_session(Some(&session), true, false).is_none());
+    }
+
+    #[test]
+    fn live_import_preserves_duplicate_codex_session_metadata() {
+        let session = super::super::snapshot::PaneAgentSessionSnapshot {
+            source: "herdr:codex".into(),
+            agent: "codex".into(),
+            kind: crate::agent_resume::AgentSessionRefKind::Id,
+            value: "shared-codex-session".into(),
+        };
+        let first = restored_terminal_agent_session(Some(&session), false, true)
+            .expect("first live terminal retains identity");
+        let second = restored_terminal_agent_session(Some(&session), true, true)
+            .expect("duplicate live terminal retains identity");
+        assert_eq!(first, second);
+        assert!(restored_terminal_agent_session(Some(&session), true, false).is_none());
     }
 
     #[tokio::test]

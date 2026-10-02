@@ -62,6 +62,52 @@ impl App {
     }
 
     pub(crate) fn handle_internal_event(&mut self, ev: AppEvent) {
+        if let AppEvent::CodexSessionsRecovered { sessions } = ev {
+            self.codex_recovery_in_flight = false;
+            for session in sessions {
+                let target = &session.target;
+                let still_attached = self
+                    .state
+                    .workspaces
+                    .iter()
+                    .any(|ws| ws.terminal_id(target.pane_id) == Some(&target.terminal_id));
+                let Some(terminal) = self.state.terminals.get(&target.terminal_id) else {
+                    continue;
+                };
+                let Some(runtime) = self.terminal_runtimes.get(&target.terminal_id) else {
+                    continue;
+                };
+                if !still_attached
+                    || terminal.codex_session_id().is_some()
+                    || terminal.effective_known_agent() != Some(crate::detect::Agent::Codex)
+                    || runtime.child_pid() != Some(target.shell_pid)
+                    || crate::codex_recovery::current_title(runtime) != target.title
+                    || !crate::detect::foreground_job(target.shell_pid).is_some_and(|job| {
+                        job.processes
+                            .iter()
+                            .any(|p| p.pid == session.process_pid && p.name == "codex")
+                    })
+                {
+                    continue;
+                }
+                tracing::info!(
+                    pane_id = ?target.pane_id,
+                    process_pid = session.process_pid,
+                    session_id = %session.session_id,
+                    "recovered missing Codex session from process-owned TUI evidence"
+                );
+                self.handle_internal_event(AppEvent::AgentSessionReported {
+                    pane_id: target.pane_id,
+                    source: "herdr:codex".into(),
+                    agent_label: "codex".into(),
+                    seq: Some(target.report_seq),
+                    session_ref: crate::agent_resume::AgentSessionRef::id(session.session_id),
+                    session_start_source: Some("resume".into()),
+                });
+                self.mark_git_status_refresh_due(Instant::now());
+            }
+            return;
+        }
         if let AppEvent::ClipboardWrite { content } = ev {
             #[cfg(not(test))]
             crate::selection::write_osc52_bytes(&content);

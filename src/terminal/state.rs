@@ -3954,6 +3954,36 @@ mod tests {
     }
 
     #[test]
+    fn codex_recovery_preserves_state_and_allows_later_native_resume() {
+        let mut terminal = test_terminal();
+        terminal.set_detected_state(Some(Agent::Codex), AgentState::Idle);
+        // A previous hook can leave a sequence behind without a session ID.
+        terminal
+            .hook_report_sequences
+            .insert("herdr:codex".into(), 10);
+        let recovered = terminal.set_agent_session_ref_for_session_start(
+            "herdr:codex".into(),
+            "codex".into(),
+            crate::agent_resume::AgentSessionRef::id("recovered-session"),
+            Some(20),
+            Some("resume".into()),
+        );
+        assert!(recovered.is_some_and(|mutation| mutation.session_ref_changed));
+        assert_eq!(terminal.codex_session_id(), Some("recovered-session"));
+        assert_eq!(terminal.state, AgentState::Idle);
+        assert!(terminal.hook_authority.is_none());
+        let resumed = terminal.set_agent_session_ref_for_session_start(
+            "herdr:codex".into(),
+            "codex".into(),
+            crate::agent_resume::AgentSessionRef::id("native-session"),
+            Some(21),
+            Some("resume".into()),
+        );
+        assert!(resumed.is_some());
+        assert_eq!(terminal.codex_session_id(), Some("native-session"));
+    }
+
+    #[test]
     fn different_owner_session_ref_does_not_replace_existing_session_ref() {
         let mut terminal = test_terminal();
         terminal
