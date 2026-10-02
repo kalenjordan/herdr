@@ -13,6 +13,9 @@
 - Added tab-aware switchers: `cmd+e` cycles recently used tabs and `cmd+d` cycles tabs containing done or blocked agents, switching when Command is released.
 
 ### Fixed
+- The latest app link preserves Markdown link text from Codex replies, such as “Call Log,” and uses a lighter muted color.
+- Notification status uses muted monochrome bell and bell-off glyphs; the nudges indicator is hidden from the tab row.
+- Codex session hooks use verified process ancestry to associate worktree and delayed sessions with their owning pane. The last app URL follows unambiguous session forks and falls back to ancestor replies.
 - Selecting a tab now requests a Git status refresh immediately instead of waiting for the periodic refresh timer.
 - Git branch and dirty-file badges now follow the selected tab’s checkout, including linked worktrees, instead of always reading the first tab. Codex worktree forks use their session checkout metadata when the fork lineage identifies a single checkout.
 - Codex tab naming now recovers the new session after `/clear` when the Codex app server gives the hook a stale pane ID.

@@ -115,6 +115,29 @@ def transcript_started_at():
     except ValueError:
         return None
 
+def repository_key(cwd):
+    try:
+        return os.path.realpath(subprocess.check_output(
+            ["git", "-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            text=True, stderr=subprocess.DEVNULL, timeout=0.5).strip())
+    except Exception:
+        return None
+
+def ancestor_pids():
+    # A hook launched by a pane's Codex process can prove ownership even when
+    # the session moved to a worktree or was created long after process launch.
+    ancestors = set()
+    pid = os.getppid()
+    while pid > 1 and pid not in ancestors:
+        ancestors.add(pid)
+        try:
+            pid = int(subprocess.check_output(
+                ["ps", "-p", str(pid), "-o", "ppid="],
+                text=True, stderr=subprocess.DEVNULL, timeout=0.5).strip())
+        except Exception:
+            break
+    return ancestors
+
 def live_pane_id():
     listed = request("pane.list", {})
     panes = (listed or {}).get("result", {}).get("panes", [])
@@ -125,21 +148,44 @@ def live_pane_id():
                 and (pane.get("agent_session") or {}).get("value") == agent_session_id]
     if len(existing) == 1:
         return existing[0]
+    ancestors = ancestor_pids()
+    owners = []
+    for pane in panes:
+        if not isinstance(pane, dict) or pane.get("agent") != "codex":
+            continue
+        info = request("pane.process_info", {"pane_id": pane.get("pane_id")})
+        processes = (info or {}).get("result", {}).get("process_info", {}).get("foreground_processes", [])
+        if any(process.get("name") == "codex" and process.get("pid") in ancestors
+               for process in processes if isinstance(process, dict)):
+            owners.append(pane.get("pane_id"))
+    if len(owners) == 1:
+        return owners[0]
+    if len(owners) > 1:
+        return None
     cwd = hook_input.get("cwd") or os.getcwd()
     if not isinstance(cwd, str) or not cwd:
         return None
+    repo = repository_key(cwd)
+    def same_checkout_family(pane):
+        paths = [pane.get("cwd"), pane.get("foreground_cwd")]
+        return cwd in paths or (repo is not None and any(
+            isinstance(path, str) and repository_key(path) == repo for path in paths))
     candidates = [pane for pane in panes if isinstance(pane, dict)
-                  and (pane.get("cwd") == cwd or pane.get("foreground_cwd") == cwd)
-                  and pane.get("agent") == "codex"]
+                  and same_checkout_family(pane) and pane.get("agent") == "codex"]
     started_at = transcript_started_at()
     matches = []
     if started_at:
         for pane in candidates:
+            claimed = (pane.get("agent_session") or {}).get("value")
+            if claimed and claimed != agent_session_id and session_start_source != "clear":
+                continue
             info = request("pane.process_info", {"pane_id": pane.get("pane_id")})
             processes = (info or {}).get("result", {}).get("process_info", {}).get("foreground_processes", [])
             if any(process.get("name") == "codex" and
-                   (actual := process_started_at(process.get("pid"))) is not None and
-                   abs((actual - started_at).total_seconds()) <= 5
+                   (actual := process_started_at(process.get("pid"))) is not None
+                   # Shared app-server hooks have no pane ancestry. Allow startup
+                   # latency, but reject old processes, future launches, and ambiguity.
+                   and 0 <= (started_at - actual).total_seconds() <= 30
                    for process in processes if isinstance(process, dict)):
                 matches.append(pane.get("pane_id"))
     if len(matches) == 1:
@@ -155,10 +201,15 @@ def live_pane_id():
             if isinstance(label, str) and label.isdigit():
                 return focused[0].get("pane_id")
     unclaimed = [pane.get("pane_id") for pane in candidates if not pane.get("agent_session")]
-    return unclaimed[0] if len(candidates) == 1 and len(unclaimed) == 1 else None
+    unclaimed_pane = next((pane for pane in candidates if pane.get("pane_id") in unclaimed), {})
+    # Directory-only fallback is restricted to an exact match, never a repo family.
+    return unclaimed[0] if len(candidates) == 1 and len(unclaimed) == 1 and cwd in (
+        unclaimed_pane.get("cwd"), unclaimed_pane.get("foreground_cwd")) else None
 
 resolved_pane_id = live_pane_id()
 if resolved_pane_id:
     params["pane_id"] = resolved_pane_id
     request("pane.report_agent_session", params)
+else:
+    print("herdr: could not uniquely associate Codex session " + agent_session_id + " with a live pane", file=__import__("sys").stderr)
 PY

@@ -1720,7 +1720,7 @@ impl AppState {
                 ws,
                 &self.plugin_status_items,
                 self.context_used_percent,
-                self.recent_reply_url.as_deref(),
+                self.recent_reply_url.as_ref(),
                 area,
             ),
             self.tab_scroll,

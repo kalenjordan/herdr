@@ -45,6 +45,21 @@ pub(crate) fn load(
         .values()
         .filter(|plugin| plugin.enabled)
         .flat_map(|plugin| load_plugin(&plugin.plugin_id))
+        .filter(|item| !(item.plugin_id == "kalen.nudges" && item.id == "nudges"))
+        .map(|mut item| {
+            if matches!(
+                item.plugin_id.as_str(),
+                "herdr-focus-notify" | "herdr-tab-notify"
+            ) && item.id == "notifications"
+            {
+                item.label = match item.severity {
+                    PluginStatusSeverity::Normal => "󰂚",
+                    PluginStatusSeverity::Warning => "󰂛",
+                }
+                .to_string();
+            }
+            item
+        })
         .collect::<Vec<_>>();
     items.sort_by(|left, right| {
         right

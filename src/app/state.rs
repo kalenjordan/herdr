@@ -1519,7 +1519,7 @@ pub struct AppState {
     /// Context used by the Codex or Claude session in the focused pane, if published by its hook.
     pub(crate) context_used_percent: Option<u8>,
     /// Derived status-bar link for the currently focused Codex session.
-    pub(crate) recent_reply_url: Option<String>,
+    pub(crate) recent_reply_url: Option<crate::codex_usage::ReplyLink>,
     /// Last client pointer position for presentation-only hover styling.
     pub(crate) mouse_position: Option<ratatui::layout::Position>,
     /// Codex session ids whose transcript usage is stale after a locally submitted `/clear`.

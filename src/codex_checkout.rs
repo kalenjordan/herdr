@@ -24,6 +24,25 @@ struct CheckoutIndex {
 static INDEX: OnceLock<Mutex<CheckoutIndex>> = OnceLock::new();
 
 pub(crate) fn load_checkout(session_id: &str, terminal_cwd: &Path) -> Option<PathBuf> {
+    let mut index = checkout_index()?;
+    let cwd = resolve_checkout(&index.sessions, session_id)?;
+    let current = crate::workspace::git_space_metadata(terminal_cwd)?;
+    let candidate = crate::workspace::git_space_metadata(&cwd)?;
+    if current.key != candidate.key
+        || (current.checkout_key != candidate.checkout_key && !candidate.is_linked_worktree)
+    {
+        return None;
+    }
+    if current.checkout_key != candidate.checkout_key
+        && index.reported.get(session_id) != Some(&cwd)
+    {
+        tracing::info!(session_id, checkout = %cwd.display(), "resolved Codex worktree checkout for Git status");
+        index.reported.insert(session_id.to_owned(), cwd.clone());
+    }
+    Some(cwd)
+}
+
+fn checkout_index() -> Option<std::sync::MutexGuard<'static, CheckoutIndex>> {
     let root = std::env::var_os("CODEX_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".codex")))?
@@ -45,21 +64,43 @@ pub(crate) fn load_checkout(session_id: &str, terminal_cwd: &Path) -> Option<Pat
         index.discover(&root);
         index.refreshed = Some(Instant::now());
     }
-    let cwd = resolve_checkout(&index.sessions, session_id)?;
-    let current = crate::workspace::git_space_metadata(terminal_cwd)?;
-    let candidate = crate::workspace::git_space_metadata(&cwd)?;
-    if current.key != candidate.key
-        || (current.checkout_key != candidate.checkout_key && !candidate.is_linked_worktree)
-    {
-        return None;
+    Some(index)
+}
+
+/// Latest unambiguous descendant first, then its ancestors for reply fallback.
+pub(crate) fn reply_session_lineage(session_id: &str) -> Vec<String> {
+    let Some(index) = checkout_index() else {
+        return vec![session_id.to_owned()];
+    };
+    resolve_reply_lineage(&index.sessions, session_id)
+}
+
+fn resolve_reply_lineage(sessions: &HashMap<String, SessionMetadata>, id: &str) -> Vec<String> {
+    let mut current = id.to_owned();
+    let mut seen = HashSet::new();
+    while seen.insert(current.clone()) {
+        let children: Vec<_> = sessions
+            .values()
+            .filter(|session| session.forked_from_id.as_deref() == Some(current.as_str()))
+            .collect();
+        if children.len() != 1 {
+            break;
+        }
+        current = children[0].id.clone();
     }
-    if current.checkout_key != candidate.checkout_key
-        && index.reported.get(session_id) != Some(&cwd)
-    {
-        tracing::info!(session_id, checkout = %cwd.display(), "resolved Codex worktree checkout for Git status");
-        index.reported.insert(session_id.to_owned(), cwd.clone());
+    let mut lineage = Vec::new();
+    let mut seen = HashSet::new();
+    while seen.insert(current.clone()) {
+        lineage.push(current.clone());
+        let Some(parent) = sessions
+            .get(&current)
+            .and_then(|session| session.forked_from_id.clone())
+        else {
+            break;
+        };
+        current = parent;
     }
-    Some(cwd)
+    lineage
 }
 
 impl CheckoutIndex {
@@ -153,6 +194,27 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    #[test]
+    fn reply_lineage_follows_unique_forks_and_falls_back_to_ancestors() {
+        let index = sessions(&[
+            ("root", "/main", None),
+            ("a", "/worktree", Some("root")),
+            ("b", "/worktree", Some("a")),
+        ]);
+        assert_eq!(
+            resolve_reply_lineage(&index, "root"),
+            vec!["b", "a", "root"]
+        );
+        assert_eq!(resolve_reply_lineage(&index, "b"), vec!["b", "a", "root"]);
+        let divergent = sessions(&[
+            ("root", "/main", None),
+            ("a", "/a", Some("root")),
+            ("b", "/b", Some("root")),
+        ]);
+        assert_eq!(resolve_reply_lineage(&divergent, "root"), vec!["root"]);
+        assert_eq!(resolve_reply_lineage(&divergent, "a"), vec!["a", "root"]);
     }
 
     #[test]

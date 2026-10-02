@@ -6,11 +6,56 @@ use std::sync::{Mutex, OnceLock};
 
 const TRANSCRIPT_TAIL_BYTES: u64 = 1024 * 1024;
 const CODEX_BASELINE_TOKENS: u64 = 12_000;
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ReplyLink {
+    pub url: String,
+    pub label: Option<String>,
+}
+
+impl From<&str> for ReplyLink {
+    fn from(url: &str) -> Self {
+        Self {
+            url: url.to_owned(),
+            label: None,
+        }
+    }
+}
+
+impl std::ops::Deref for ReplyLink {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.url
+    }
+}
+
+fn latest_reply_link(text: &str) -> Option<ReplyLink> {
+    let url = crate::app::actions::latest_app_url(text)?;
+    let start = url.as_ptr() as usize - text.as_ptr() as usize;
+    let prefix = text.get(..start)?;
+    let suffix = text.get(start + url.len()..)?;
+    let label = if suffix.starts_with(')') {
+        prefix.strip_suffix("](").and_then(|before| {
+            let opening = before.rfind('[')?;
+            if before[..opening].ends_with('!') {
+                return None;
+            }
+            let label = before[opening + 1..].trim();
+            (!label.is_empty()).then(|| label.to_owned())
+        })
+    } else {
+        None
+    };
+    Some(ReplyLink {
+        url: url.to_owned(),
+        label,
+    })
+}
+
 #[derive(Clone)]
 struct ReplyUrlCacheEntry {
     len: u64,
     modified: Option<std::time::SystemTime>,
-    url: Option<String>,
+    url: Option<ReplyLink>,
 }
 
 static REPLY_URLS: OnceLock<Mutex<HashMap<PathBuf, ReplyUrlCacheEntry>>> = OnceLock::new();
@@ -50,7 +95,13 @@ pub(crate) fn load_context_used_percent(session_id: &str) -> Option<u8> {
 }
 
 /// Derive a link for the focused session's status display from assistant replies.
-pub(crate) fn load_latest_reply_url(session_id: &str) -> Option<String> {
+pub(crate) fn load_latest_reply_url(session_id: &str) -> Option<ReplyLink> {
+    crate::codex_checkout::reply_session_lineage(session_id)
+        .iter()
+        .find_map(|id| load_session_reply_url(id))
+}
+
+fn load_session_reply_url(session_id: &str) -> Option<ReplyLink> {
     if !valid_session_id(session_id) {
         return None;
     }
@@ -133,7 +184,7 @@ pub(crate) fn is_app_url(url: &str) -> bool {
             .any(|part| matches!(part, "preview" | "sandbox" | "staging" | "dev"))
 }
 
-fn reply_url(line: &[u8]) -> Option<String> {
+fn reply_url(line: &[u8]) -> Option<ReplyLink> {
     let record: serde_json::Value = serde_json::from_slice(line).ok()?;
     let payload = &record["payload"];
     if record["type"] == "response_item"
@@ -148,18 +199,18 @@ fn reply_url(line: &[u8]) -> Option<String> {
                 if part["type"] != "output_text" {
                     return None;
                 }
-                crate::app::actions::latest_app_url(part["text"].as_str()?).map(str::to_owned)
+                latest_reply_link(part["text"].as_str()?)
             });
     }
     None
 }
 
 #[cfg(test)]
-fn read_latest_reply_url(path: &Path) -> Option<String> {
+fn read_latest_reply_url(path: &Path) -> Option<ReplyLink> {
     read_latest_reply_url_since(path, 0)
 }
 
-fn read_latest_reply_url_since(path: &Path, lower_bound: u64) -> Option<String> {
+fn read_latest_reply_url_since(path: &Path, lower_bound: u64) -> Option<ReplyLink> {
     let mut file = std::fs::File::open(path).ok()?;
     let mut end = file.metadata().ok()?.len();
     let mut remainder = Vec::new();
@@ -270,6 +321,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn reply_link_preserves_markdown_label_and_click_destination() {
+        let link =
+            latest_reply_link("[Call Log](http://outbound-dash.localhost:8766/calls)").unwrap();
+        assert_eq!(link.label.as_deref(), Some("Call Log"));
+        assert_eq!(link.url, "http://outbound-dash.localhost:8766/calls");
+        assert_eq!(
+            latest_reply_link("http://localhost:3000/calls")
+                .unwrap()
+                .label,
+            None
+        );
+        assert_eq!(
+            latest_reply_link("[old](http://localhost:3000/a) then [new](http://localhost:3000/b)")
+                .unwrap()
+                .label
+                .as_deref(),
+            Some("new")
+        );
+    }
+
+    #[test]
     fn app_urls_include_local_and_preview_hosts_but_exclude_reference_links() {
         for url in [
             "http://localhost:8766/a",
@@ -309,7 +381,7 @@ mod tests {
             None
         );
         assert_eq!(reply_url(br#"{"type":"response_item","payload":{"type":"function_call_output","output":"http://localhost:3000"}}"#), None);
-        assert_eq!(reply_url(record("assistant", "Open [app](http://outbound-dash.localhost:8766/clients/a?tab=one). See https://github.com/a.").as_bytes()), Some("http://outbound-dash.localhost:8766/clients/a?tab=one".into()));
+        assert_eq!(reply_url(record("assistant", "Open [app](http://outbound-dash.localhost:8766/clients/a?tab=one). See https://github.com/a.").as_bytes()), Some(ReplyLink { url: "http://outbound-dash.localhost:8766/clients/a?tab=one".into(), label: Some("app".into()) }));
         assert_eq!(
             reply_url(
                 record(
@@ -331,7 +403,10 @@ mod tests {
         std::fs::write(&path, data).unwrap();
         assert_eq!(
             read_latest_reply_url(&path),
-            Some("http://localhost:3000/a".into())
+            Some(ReplyLink {
+                url: "http://localhost:3000/a".into(),
+                label: Some("App".into())
+            })
         );
         let _ = std::fs::remove_file(path);
     }

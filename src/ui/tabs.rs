@@ -1,6 +1,6 @@
 use ratatui::{
     layout::Rect,
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     widgets::Paragraph,
     Frame,
 };
@@ -35,7 +35,7 @@ pub(crate) fn tab_content_rect_with_status(
     ws: &crate::workspace::Workspace,
     plugin_items: &[crate::plugin_status::PluginStatusItem],
     context_used_percent: Option<u8>,
-    recent_reply_url: Option<&str>,
+    recent_reply_url: Option<&crate::codex_usage::ReplyLink>,
     area: Rect,
 ) -> Rect {
     let reserved = status_labels(
@@ -48,6 +48,7 @@ pub(crate) fn tab_content_rect_with_status(
     .iter()
     .map(|label| display_width_u16(label).saturating_add(2))
     .sum::<u16>()
+    .saturating_add(u16::from(right_status_width(ws, plugin_items, area) > 0))
     .min(area.width);
     let label_width = workspace_label_width(ws)
         .saturating_add(1)
@@ -99,7 +100,7 @@ fn status_labels(
     ws: &crate::workspace::Workspace,
     plugin_items: &[crate::plugin_status::PluginStatusItem],
     context_used_percent: Option<u8>,
-    recent_reply_url: Option<&str>,
+    recent_reply_url: Option<&crate::codex_usage::ReplyLink>,
     area_width: u16,
 ) -> Vec<String> {
     let mut labels = plugin_items
@@ -121,12 +122,27 @@ fn status_labels(
     labels
 }
 
-fn reply_url_label(url: &str, area_width: u16) -> String {
+fn reply_link_color(palette: &crate::app::state::Palette) -> Color {
+    match palette.overlay1 {
+        Color::Rgb(r, g, b) => Color::Rgb(
+            r.saturating_add(24),
+            g.saturating_add(24),
+            b.saturating_add(24),
+        ),
+        _ => Color::White,
+    }
+}
+
+fn reply_url_label(link: &crate::codex_usage::ReplyLink, area_width: u16) -> String {
+    let url = link.url.as_str();
     let text = url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))
         .unwrap_or(url);
-    super::text::truncate_end(text, usize::from((area_width / 3).clamp(4, 32)))
+    super::text::truncate_end(
+        link.label.as_deref().unwrap_or(text),
+        usize::from((area_width / 3).clamp(4, 32)),
+    )
 }
 
 fn right_status_width(
@@ -148,9 +164,10 @@ fn status_rect(
     plugin_items: &[crate::plugin_status::PluginStatusItem],
     area: Rect,
 ) -> Rect {
-    let width = right_status_width(ws, plugin_items, area);
+    let padding = u16::from(right_status_width(ws, plugin_items, area) > 0);
+    let width = right_status_width(ws, plugin_items, area).min(area.width.saturating_sub(padding));
     Rect::new(
-        area.x + area.width.saturating_sub(width),
+        area.x + area.width.saturating_sub(width).saturating_sub(padding),
         area.y,
         width,
         area.height,
@@ -165,7 +182,7 @@ fn left_status_rect(app: &AppState, ws: &crate::workspace::Workspace, status_rec
         .chain(git_dirty_label(ws))
         .chain(
             app.recent_reply_url
-                .as_deref()
+                .as_ref()
                 .map(|url| reply_url_label(url, app.view.tab_bar_rect.width)),
         );
     let width = labels
@@ -483,9 +500,18 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
             .plugin_status_items
             .iter()
             .map(|item| {
+                let color = if matches!(
+                    item.plugin_id.as_str(),
+                    "herdr-focus-notify" | "herdr-tab-notify"
+                ) && item.id == "notifications"
+                {
+                    p.subtext0
+                } else {
+                    p.overlay1
+                };
                 ratatui::text::Span::styled(
                     format!(" {} ", item.label),
-                    Style::default().fg(p.overlay1).bg(p.panel_bg),
+                    Style::default().fg(color).bg(p.panel_bg),
                 )
             })
             .collect::<Vec<_>>();
@@ -518,8 +544,8 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
                 Style::default().fg(p.overlay1).bg(p.panel_bg),
             ));
         }
-        if let Some(url) = app.recent_reply_url.as_deref() {
-            let mut style = Style::default().fg(p.overlay1).bg(p.panel_bg);
+        if let Some(url) = app.recent_reply_url.as_ref() {
+            let mut style = Style::default().fg(reply_link_color(p)).bg(p.panel_bg);
             if app.mouse_capture
                 && matches!(
                     app.mode,
@@ -687,6 +713,31 @@ mod tests {
     }
 
     #[test]
+    fn reply_link_is_lighter_than_status_text_in_light_and_dark_themes() {
+        for palette in [
+            crate::app::state::Palette::catppuccin_latte(),
+            crate::app::state::Palette::catppuccin(),
+        ] {
+            let Color::Rgb(r, g, b) = palette.overlay1 else {
+                panic!("expected RGB status color")
+            };
+            let Color::Rgb(lr, lg, lb) = reply_link_color(&palette) else {
+                panic!("expected RGB link color")
+            };
+            assert!(lr > r && lg > g && lb > b);
+        }
+    }
+
+    #[test]
+    fn reply_label_uses_markdown_text() {
+        let link = crate::codex_usage::ReplyLink {
+            url: "http://outbound-dash.localhost:8766/calls".into(),
+            label: Some("Call Log".into()),
+        };
+        assert_eq!(reply_url_label(&link, 100), "Call Log");
+    }
+
+    #[test]
     fn tab_bar_marks_zoomed_tabs_without_renaming_them() {
         let mut app = AppState::test_new();
         let mut ws = Workspace::test_new("test");
@@ -763,10 +814,10 @@ mod tests {
             &app.workspaces[0],
             &app.plugin_status_items,
             app.context_used_percent,
-            app.recent_reply_url.as_deref(),
+            app.recent_reply_url.as_ref(),
             app.view.tab_bar_rect,
         );
-        assert_eq!(tab_area, Rect::new(7, 0, 14, 1));
+        assert_eq!(tab_area, Rect::new(7, 0, 13, 1));
 
         let backend = TestBackend::new(40, 1);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -788,7 +839,7 @@ mod tests {
             &app.workspaces[0],
             &app.plugin_status_items,
             app.context_used_percent,
-            app.recent_reply_url.as_deref(),
+            app.recent_reply_url.as_ref(),
             app.view.tab_bar_rect,
         );
         let view = compute_tab_bar_view(&app.workspaces[0], tab_area, 0, true, false);
@@ -825,7 +876,7 @@ mod tests {
             &app.workspaces[0],
             &app.plugin_status_items,
             app.context_used_percent,
-            app.recent_reply_url.as_deref(),
+            app.recent_reply_url.as_ref(),
             app.view.tab_bar_rect,
         );
         let view = compute_tab_bar_view(&app.workspaces[0], tab_area, 0, true, false);
@@ -864,7 +915,7 @@ mod tests {
             .unwrap();
         let buffer = terminal.backend().buffer();
         assert_eq!(buffer[(rect.x + 1, 0)].symbol(), "o");
-        assert_eq!(buffer[(rect.x + 1, 0)].fg, app.palette.overlay1);
+        assert_eq!(buffer[(rect.x + 1, 0)].fg, reply_link_color(&app.palette));
         assert!(!buffer[(rect.x + 1, 0)]
             .modifier
             .contains(Modifier::UNDERLINED));
@@ -920,7 +971,7 @@ mod tests {
             &app.workspaces[0],
             &app.plugin_status_items,
             app.context_used_percent,
-            app.recent_reply_url.as_deref(),
+            app.recent_reply_url.as_ref(),
             app.view.tab_bar_rect,
         );
         let view = compute_tab_bar_view(&app.workspaces[0], tab_area, 0, true, true);

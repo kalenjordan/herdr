@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
-import { rm } from "node:fs/promises";
+import { rm, mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -168,6 +168,8 @@ test("Codex session hook reports to the sole live pane in its directory", async 
           { pane_id: "live:p1", cwd: "/project", agent: "codex",
             ...(claimedByAnotherSession ? { agent_session: { kind: "id", value: "another-session" } } : {}) },
         ] } }) + "\n");
+      } else if (request.method === "pane.process_info") {
+        socket.end('{"result":{"process_info":{"foreground_processes":[]}}}\n');
       } else {
         reportedPanes.push(request.params.pane_id);
         socket.end('{"result":{"type":"ok"}}\n');
@@ -194,6 +196,85 @@ test("Codex session hook reports to the sole live pane in its directory", async 
   expect(reportedPanes).toEqual(["live:p1"]);
 });
 
+test("Codex hook proves pane ownership through ancestry despite worktree cwd and delayed session", async () => {
+  socketPath = join(tmpdir(), `herdr-codex-ancestry-${process.pid}.sock`);
+  await rm(socketPath, { force: true });
+  const reports: string[] = [];
+  server = createServer(socket => {
+    let input = "";
+    socket.on("data", chunk => {
+      input += chunk;
+      if (!input.includes("\n")) return;
+      const request = JSON.parse(input.slice(0, input.indexOf("\n")));
+      if (request.method === "pane.list") {
+        socket.end(JSON.stringify({ result: { panes: [
+          { pane_id: "owner", cwd: "/main", agent: "codex" },
+          { pane_id: "other", cwd: "/main", agent: "codex" },
+        ] } }) + "\n");
+      } else if (request.method === "pane.process_info") {
+        socket.end(JSON.stringify({ result: { process_info: { foreground_processes: [
+          { name: "codex", pid: request.params.pane_id === "owner" ? process.pid : 99999999 },
+        ] } } }) + "\n");
+      } else {
+        reports.push(request.params.pane_id);
+        socket.end('{"result":{"type":"ok"}}\n');
+      }
+    });
+  });
+  await new Promise<void>(resolve => server?.listen(socketPath, resolve));
+  const child = spawn("sh", [join(import.meta.dir, "codex/herdr-agent-state.sh"), "session"], {
+    env: { ...process.env, HERDR_ENV: "1", HERDR_PANE_ID: "other", HERDR_SOCKET_PATH: socketPath },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  child.stdin.end(JSON.stringify({ hook_event_name: "SessionStart", source: "resume",
+    session_id: "delayed-session", cwd: "/worktree" }));
+  expect(await new Promise(resolve => child.on("close", resolve))).toBe(0);
+  expect(reports).toEqual(["owner"]);
+});
+
+test("shared-server hook matches a delayed worktree session and rejects ambiguous launches", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "herdr-hook-worktree-"));
+  try {
+    const main = join(fixture, "main"), worktree = join(fixture, "worktree"), bin = join(fixture, "bin");
+    execFileSync("git", ["init", main]);
+    execFileSync("git", ["-C", main, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "init"]);
+    execFileSync("git", ["-C", main, "worktree", "add", "--detach", worktree]);
+    await mkdir(bin);
+    await writeFile(join(bin, "ps"), '#!/bin/sh\ncase "$*" in *ppid=*) echo 1;; *) echo "Thu Oct  1 19:02:28 2026";; esac\n', { mode: 0o755 });
+    socketPath = join(fixture, "hook.sock");
+    let ambiguous = false;
+    const reports: string[] = [];
+    server = createServer(socket => {
+      let input = "";
+      socket.on("data", chunk => {
+        input += chunk;
+        if (!input.includes("\n")) return;
+        const request = JSON.parse(input.slice(0, input.indexOf("\n")));
+        if (request.method === "pane.list") socket.end(JSON.stringify({ result: { panes:
+          ["owner", ...(ambiguous ? ["other"] : [])].map(pane_id => ({ pane_id, cwd: main, agent: "codex" })) } }) + "\n");
+        else if (request.method === "pane.process_info") socket.end(JSON.stringify({ result: { process_info: {
+          foreground_processes: [{ name: "codex", pid: 99999999 }] } } }) + "\n");
+        else { reports.push(request.params.pane_id); socket.end('{"result":{"type":"ok"}}\n'); }
+      });
+    });
+    await new Promise<void>(resolve => server?.listen(socketPath, resolve));
+    const run = async () => {
+      const child = spawn("sh", [join(import.meta.dir, "codex/herdr-agent-state.sh"), "session"], {
+        env: { ...process.env, PATH: bin + ":" + process.env.PATH, HERDR_ENV: "1", HERDR_PANE_ID: "stale", HERDR_SOCKET_PATH: socketPath },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      child.stdin.end(JSON.stringify({ hook_event_name: "SessionStart", source: "startup", session_id: "delayed",
+        cwd: worktree, transcript_path: join(fixture, "rollout-2026-10-01T19-02-34-delayed.jsonl") }));
+      expect(await new Promise(resolve => child.on("close", resolve))).toBe(0);
+    };
+    await run();
+    expect(reports).toEqual(["owner"]);
+    ambiguous = true;
+    await run();
+    expect(reports).toEqual(["owner"]);
+  } finally { await rm(fixture, { recursive: true, force: true }); }
+});
+
 test("Codex clear claims the focused numeric tab despite a stale inherited pane", async () => {
   const recordingSocketPath = join(tmpdir(), `herdr-codex-clear-${process.pid}.sock`);
   socketPath = recordingSocketPath;
@@ -217,6 +298,8 @@ test("Codex clear claims the focused numeric tab despite a stale inherited pane"
         ] } }) + "\n");
       } else if (request.method === "tab.get") {
         socket.end('{"result":{"tab":{"label":"5"}}}\n');
+      } else if (request.method === "pane.process_info") {
+        socket.end('{"result":{"process_info":{"foreground_processes":[]}}}\n');
       } else {
         reportedPanes.push(request.params.pane_id);
         socket.end('{"result":{"type":"ok"}}\n');

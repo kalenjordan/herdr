@@ -271,7 +271,7 @@ fn compute_view_internal(
                     ws,
                     &app.plugin_status_items,
                     app.context_used_percent,
-                    app.recent_reply_url.as_deref(),
+                    app.recent_reply_url.as_ref(),
                     tab_bar_rect,
                 ),
                 app.tab_scroll,
