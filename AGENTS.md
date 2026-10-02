@@ -64,10 +64,11 @@ Read-only investigation can happen in the shared checkout.
 
 Small changes or small tasks are fine in the default main worktree. If you find unrelated implementation changes already in progress in the main worktree, use a dedicated worktree instead. Use a dedicated worktree for bigger features too.
 
-Use this layout:
+When using Codex, use its native worktree support to manage task checkouts instead of creating a separate `../herdr-worktrees/` directory. Otherwise, use an isolated checkout in a location appropriate to the environment.
+
+Use this integration layout:
 
 - shared integration checkout: `../herdr`
-- task worktrees: `../herdr-worktrees/<task-slug>`
 - task branches: `issue/<id>-<slug>` when an issue exists
 
 Do all code edits, tests, and validation inside the task worktree.
