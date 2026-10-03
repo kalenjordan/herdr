@@ -2482,13 +2482,12 @@ fn word_bounds_at_column(row: &str, col: u16) -> Option<(u16, u16)> {
 }
 
 /// Last web link in assistant text, using the same edge rules as pane links.
-pub(crate) fn latest_app_url(text: &str) -> Option<&str> {
+pub(crate) fn latest_web_url(text: &str) -> Option<&str> {
     let cells = text_cells(text);
     url_spans(&cells).into_iter().rev().find_map(|span| {
-        let url = safe_web_url(
+        safe_web_url(
             text.get(byte_index_for_cell(text, span.start)..byte_index_after_cell(text, span.end))?,
-        )?;
-        crate::codex_usage::is_app_url(url).then_some(url)
+        )
     })
 }
 

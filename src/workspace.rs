@@ -1070,23 +1070,39 @@ impl Workspace {
             .or_else(|| Some(self.identity_cwd.clone()))
     }
 
-    /// Git presentation follows the selected tab without changing workspace identity.
+    /// Git presentation follows the focused pane without changing workspace identity.
     pub fn resolved_git_status_cwd_from(
         &self,
         terminals: &HashMap<TerminalId, TerminalState>,
         terminal_runtimes: &TerminalRuntimeRegistry,
     ) -> Option<PathBuf> {
+        let Some(focused) = self.focused_pane_id() else {
+            return self.resolved_identity_cwd_from(terminals, terminal_runtimes);
+        };
         let cwd = self
             .active_tab()
-            .and_then(|tab| tab.cwd_for_pane(tab.root_pane, terminals, terminal_runtimes))
+            .and_then(|tab| tab.cwd_for_pane(focused, terminals, terminal_runtimes))
             .or_else(|| self.resolved_identity_cwd_from(terminals, terminal_runtimes))?;
-        let checkout = self
-            .active_tab()
-            .and_then(|tab| tab.terminal_id(tab.root_pane))
-            .and_then(|id| terminals.get(id))
-            .and_then(|terminal| terminal.codex_session_id())
-            .and_then(|session| crate::codex_checkout::load_checkout(session, &cwd));
-        Some(checkout.unwrap_or(cwd))
+        let Some(terminal_id) = self.active_tab()?.terminal_id(focused) else {
+            return Some(cwd);
+        };
+        let Some(terminal) = terminals.get(terminal_id) else {
+            return Some(cwd);
+        };
+        if terminal.effective_known_agent() != Some(crate::detect::Agent::Codex) {
+            return Some(cwd);
+        }
+        let detection_text = terminal_runtimes
+            .get(terminal_id)
+            .map(|runtime| runtime.detection_text());
+        Some(
+            crate::codex_checkout::presentation_context(
+                terminal.codex_session_id(),
+                &cwd,
+                detection_text.as_deref(),
+            )
+            .checkout,
+        )
     }
 
     pub fn display_name(&self) -> String {
@@ -1636,15 +1652,17 @@ mod tests {
     }
 
     #[test]
-    fn git_status_follows_active_tab_without_changing_workspace_identity() {
+    fn git_status_follows_focused_pane_without_changing_workspace_identity() {
         let mut ws = Workspace::test_adversarial_identity_state();
         let mut terminals = HashMap::new();
         for (index, tab) in ws.tabs.iter().enumerate() {
-            let id = tab.terminal_id(tab.root_pane).unwrap().clone();
-            terminals.insert(
-                id.clone(),
-                TerminalState::new(id, PathBuf::from(format!("/checkout/{index}"))),
-            );
+            for pane in [tab.root_pane, tab.layout.focused()] {
+                let id = tab.terminal_id(pane).unwrap().clone();
+                terminals.insert(
+                    id.clone(),
+                    TerminalState::new(id, PathBuf::from(format!("/checkout/{index}"))),
+                );
+            }
         }
         let runtimes = TerminalRuntimeRegistry::new();
         for index in 0..ws.tabs.len() {
@@ -1659,6 +1677,30 @@ mod tests {
             );
             ws.assert_invariants_for_test();
         }
+    }
+
+    #[test]
+    fn git_status_and_reply_context_follow_same_focused_pane_in_split_tab() {
+        let mut ws = Workspace::test_new("split");
+        let root = ws.tabs[0].root_pane;
+        let second = ws.test_split(Direction::Horizontal);
+        let mut terminals = HashMap::new();
+        for (pane_id, cwd) in [(root, "/checkout/root"), (second, "/checkout/focused")] {
+            let id = ws.tabs[0].terminal_id(pane_id).unwrap().clone();
+            terminals.insert(id.clone(), TerminalState::new(id, PathBuf::from(cwd)));
+        }
+        let runtimes = TerminalRuntimeRegistry::new();
+
+        ws.tabs[0].layout.focus_pane(second);
+        assert_eq!(
+            ws.resolved_git_status_cwd_from(&terminals, &runtimes),
+            Some(PathBuf::from("/checkout/focused"))
+        );
+        ws.tabs[0].layout.focus_pane(root);
+        assert_eq!(
+            ws.resolved_git_status_cwd_from(&terminals, &runtimes),
+            Some(PathBuf::from("/checkout/root"))
+        );
     }
 
     #[test]

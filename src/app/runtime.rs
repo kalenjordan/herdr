@@ -625,32 +625,50 @@ impl App {
                     .get(&terminal_id)
                     .map(|terminal| (terminal_id, terminal))
             });
-        let used = terminal.as_ref().and_then(|(terminal_id, terminal)| {
-            if let Some(session_id) = terminal.codex_session_id() {
-                if self
-                    .state
+        let suppressed = terminal.as_ref().is_some_and(|(terminal_id, terminal)| {
+            terminal.codex_session_id().is_some_and(|session_id| {
+                self.state
                     .suppressed_codex_context_sessions
                     .get(terminal_id)
                     .is_some_and(|suppressed| suppressed == session_id)
-                {
-                    return None;
-                }
-                crate::codex_usage::load_context_used_percent(session_id)
-            } else {
-                terminal.claude_context_used_percent()
-            }
+            })
         });
-        let url = terminal.and_then(|(terminal_id, terminal)| {
-            let session_id = terminal.codex_session_id()?;
-            if self
-                .state
-                .suppressed_codex_context_sessions
-                .get(&terminal_id)
-                .is_some_and(|suppressed| suppressed == session_id)
-            {
+        let context = terminal.as_ref().and_then(|(terminal_id, terminal)| {
+            if suppressed || terminal.effective_known_agent() != Some(crate::detect::Agent::Codex) {
                 return None;
             }
-            crate::codex_usage::load_latest_reply_url(session_id)
+            let runtime = self.terminal_runtimes.get(terminal_id);
+            let cwd = runtime
+                .and_then(|runtime| runtime.cwd())
+                .unwrap_or_else(|| terminal.cwd.clone());
+            let detection_text = runtime.map(|runtime| runtime.detection_text());
+            Some(crate::codex_checkout::presentation_context(
+                terminal.codex_session_id(),
+                &cwd,
+                detection_text.as_deref(),
+            ))
+        });
+        let used = if suppressed {
+            None
+        } else if terminal.as_ref().is_some_and(|(_, terminal)| {
+            terminal.effective_known_agent() == Some(crate::detect::Agent::Codex)
+        }) {
+            context.as_ref().and_then(|context| {
+                context
+                    .session_id
+                    .as_deref()
+                    .and_then(crate::codex_usage::load_context_used_percent)
+            })
+        } else {
+            terminal
+                .as_ref()
+                .and_then(|(_, terminal)| terminal.claude_context_used_percent())
+        };
+        let url = context.and_then(|context| {
+            context
+                .session_id
+                .as_deref()
+                .and_then(crate::codex_usage::load_latest_reply_url)
         });
         let changed = used != self.state.context_used_percent || url != self.state.recent_reply_url;
         self.state.context_used_percent = used;

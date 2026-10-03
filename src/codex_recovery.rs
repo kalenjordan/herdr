@@ -1,6 +1,7 @@
 //! Recover missing session identity from evidence owned by a live Codex TUI.
 
 use std::io::Write;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
@@ -24,6 +25,36 @@ pub(crate) fn current_title(runtime: &crate::terminal::TerminalRuntime) -> Strin
 }
 
 fn footer_title(text: &str) -> Option<String> {
+    let footer = live_footer(text)?;
+    let mut parts = footer.split(" · ");
+    let model = parts.next()?;
+    if !model.starts_with("GPT-") && !model.starts_with("gpt-") {
+        return None;
+    }
+    let title = parts.next()?.trim();
+    parts.next()?;
+    (!title.is_empty() && !title.contains('…')).then(|| title.to_owned())
+}
+
+pub(crate) fn footer_checkout(text: &str) -> Option<PathBuf> {
+    footer_title(text)?;
+    let footer = live_footer(text)?;
+    let mut paths = footer.split(" · ").skip(2).filter_map(|part| {
+        let part = part.trim();
+        if part.contains('…') {
+            return None;
+        }
+        if let Some(rest) = part.strip_prefix("~/") {
+            return std::env::var_os("HOME").map(|home| PathBuf::from(home).join(rest));
+        }
+        let path = PathBuf::from(part);
+        path.is_absolute().then_some(path)
+    });
+    let path = paths.next()?;
+    paths.next().is_none().then_some(path)
+}
+
+fn live_footer(text: &str) -> Option<&str> {
     let mut bottom = text
         .lines()
         .rev()
@@ -33,15 +64,7 @@ fn footer_title(text: &str) -> Option<String> {
     if !controls.contains("← for agents") || !controls.contains("? for shortcuts") {
         return None;
     }
-    let footer = bottom.next()?;
-    let mut parts = footer.split(" · ");
-    let model = parts.next()?;
-    if !model.starts_with("GPT-") && !model.starts_with("gpt-") {
-        return None;
-    }
-    let title = parts.next()?.trim();
-    parts.next()?;
-    (!title.is_empty() && !title.contains('…')).then(|| title.to_owned())
+    bottom.next()
 }
 
 #[derive(Clone, Debug)]
@@ -154,5 +177,24 @@ mod tests {
             "GPT-6.1-Sol low · Truncated… · /repo\n← for agents · ? for shortcuts"
         )
         .is_none());
+    }
+
+    #[test]
+    fn live_footer_identifies_checkout_without_using_transcript_text() {
+        let screen = "• Mentioned /tmp/other-repo in a reply\n\n› Ask Codex to do anything\nGPT-6.1-Sol low · Check smart lead auto-pruning · outbound-dash · ~/.codex/worktrees/e4b8/outbound-dash · codex/smartlead-auto-pruning\n← for agents · ? for shortcuts\n";
+        let expected = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .map(|home| home.join(".codex/worktrees/e4b8/outbound-dash"));
+        assert_eq!(footer_checkout(screen), expected);
+        assert_eq!(
+            footer_checkout("• Mentioned /tmp/other-repo in a reply"),
+            None
+        );
+        assert_eq!(
+            footer_checkout(
+                "GPT-6.1-Sol low · Title · repo · /tmp/re…\n← for agents · ? for shortcuts"
+            ),
+            None
+        );
     }
 }

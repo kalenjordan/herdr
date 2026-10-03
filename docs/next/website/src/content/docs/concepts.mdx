@@ -17,7 +17,7 @@ A tab is a layout inside a workspace. Use tabs to separate views like `agents`, 
 
 Tabs are addressable from the CLI and socket API.
 
-On desktop, the tab row shows a clickable link beside the repository dirty count for the latest local or preview app URL in the focused Codex session’s replies. Later replies without an app URL keep the previous link; switching panes follows the selected session. This uses the local Codex transcript and does not require worktree configuration. Local hosts include localhost, private IP addresses, and `.localhost`, `.local`, or `.test` names. Preview hosts include names with a `preview`, `sandbox`, `staging`, or `dev` component, plus deployments on `vercel.app`, `netlify.app`, `pages.dev`, and `trycloudflare.com`. Ordinary GitHub and documentation links are ignored.
+On desktop, the tab row shows a clickable link beside the repository dirty count for the latest HTTP or HTTPS URL in the focused Codex session’s replies, including local apps, preview deployments, GitHub, and documentation links. Herdr compares replies across a forked session and its parent by reply time. Later replies without a web URL keep the previous link. The link and Git status follow the focused pane's Codex checkout when its live footer identifies a checkout in the same repository. This uses the local Codex transcript and does not require worktree configuration.
 
 ## Pane
 

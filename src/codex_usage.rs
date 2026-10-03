@@ -29,7 +29,7 @@ impl std::ops::Deref for ReplyLink {
 }
 
 fn latest_reply_link(text: &str) -> Option<ReplyLink> {
-    let url = crate::app::actions::latest_app_url(text)?;
+    let url = crate::app::actions::latest_web_url(text)?;
     let start = url.as_ptr() as usize - text.as_ptr() as usize;
     let prefix = text.get(..start)?;
     let suffix = text.get(start + url.len()..)?;
@@ -52,10 +52,16 @@ fn latest_reply_link(text: &str) -> Option<ReplyLink> {
 }
 
 #[derive(Clone)]
+struct TimedReplyLink {
+    link: ReplyLink,
+    timestamp: Option<String>,
+}
+
+#[derive(Clone)]
 struct ReplyUrlCacheEntry {
     len: u64,
     modified: Option<std::time::SystemTime>,
-    url: Option<ReplyLink>,
+    url: Option<TimedReplyLink>,
 }
 
 static REPLY_URLS: OnceLock<Mutex<HashMap<PathBuf, ReplyUrlCacheEntry>>> = OnceLock::new();
@@ -96,12 +102,22 @@ pub(crate) fn load_context_used_percent(session_id: &str) -> Option<u8> {
 
 /// Derive a link for the focused session's status display from assistant replies.
 pub(crate) fn load_latest_reply_url(session_id: &str) -> Option<ReplyLink> {
-    crate::codex_checkout::reply_session_lineage(session_id)
-        .iter()
-        .find_map(|id| load_session_reply_url(id))
+    newest_reply_link(
+        crate::codex_checkout::reply_session_lineage(session_id)
+            .iter()
+            .filter_map(|id| load_session_reply_url(id)),
+    )
 }
 
-fn load_session_reply_url(session_id: &str) -> Option<ReplyLink> {
+fn newest_reply_link(candidates: impl Iterator<Item = TimedReplyLink>) -> Option<ReplyLink> {
+    // Codex transcript timestamps use UTC ISO 8601 strings, so lexical order
+    // follows reply time across a fork and its parent.
+    candidates
+        .max_by(|a, b| a.timestamp.cmp(&b.timestamp))
+        .map(|candidate| candidate.link)
+}
+
+fn load_session_reply_url(session_id: &str) -> Option<TimedReplyLink> {
     if !valid_session_id(session_id) {
         return None;
     }
@@ -139,59 +155,14 @@ fn load_session_reply_url(session_id: &str) -> Option<ReplyLink> {
     url
 }
 
-/// Recognizable local hosts and common preview hostnames. No worktree lookup is needed.
-pub(crate) fn is_app_url(url: &str) -> bool {
-    let Some(rest) = url
-        .strip_prefix("http://")
-        .or_else(|| url.strip_prefix("https://"))
-    else {
-        return false;
-    };
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-    if authority.contains('@') {
-        return false;
-    }
-    let host = if authority.starts_with('[') {
-        authority
-            .split(']')
-            .next()
-            .unwrap_or_default()
-            .trim_start_matches('[')
-    } else {
-        authority.split(':').next().unwrap_or_default()
-    }
-    .to_ascii_lowercase();
-    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-        return match ip {
-            std::net::IpAddr::V4(ip) => ip.is_loopback() || ip.is_private(),
-            std::net::IpAddr::V6(ip) => ip.is_loopback() || ip.is_unique_local(),
-        };
-    }
-    host == "localhost"
-        || [
-            ".localhost",
-            ".local",
-            ".test",
-            ".vercel.app",
-            ".netlify.app",
-            ".pages.dev",
-            ".trycloudflare.com",
-        ]
-        .iter()
-        .any(|suffix| host.ends_with(suffix))
-        || host
-            .split(['.', '-'])
-            .any(|part| matches!(part, "preview" | "sandbox" | "staging" | "dev"))
-}
-
-fn reply_url(line: &[u8]) -> Option<ReplyLink> {
+fn reply_url(line: &[u8]) -> Option<TimedReplyLink> {
     let record: serde_json::Value = serde_json::from_slice(line).ok()?;
     let payload = &record["payload"];
     if record["type"] == "response_item"
         && payload["type"] == "message"
         && payload["role"] == "assistant"
     {
-        return payload["content"]
+        let link = payload["content"]
             .as_array()?
             .iter()
             .rev()
@@ -200,17 +171,21 @@ fn reply_url(line: &[u8]) -> Option<ReplyLink> {
                     return None;
                 }
                 latest_reply_link(part["text"].as_str()?)
-            });
+            })?;
+        return Some(TimedReplyLink {
+            link,
+            timestamp: record["timestamp"].as_str().map(str::to_owned),
+        });
     }
     None
 }
 
 #[cfg(test)]
 fn read_latest_reply_url(path: &Path) -> Option<ReplyLink> {
-    read_latest_reply_url_since(path, 0)
+    read_latest_reply_url_since(path, 0).map(|candidate| candidate.link)
 }
 
-fn read_latest_reply_url_since(path: &Path, lower_bound: u64) -> Option<ReplyLink> {
+fn read_latest_reply_url_since(path: &Path, lower_bound: u64) -> Option<TimedReplyLink> {
     let mut file = std::fs::File::open(path).ok()?;
     let mut end = file.metadata().ok()?.len();
     let mut remainder = Vec::new();
@@ -320,6 +295,10 @@ fn valid_session_id(value: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn reply_link(line: &[u8]) -> Option<ReplyLink> {
+        reply_url(line).map(|candidate| candidate.link)
+    }
+
     #[test]
     fn reply_link_preserves_markdown_label_and_click_destination() {
         let link =
@@ -342,33 +321,23 @@ mod tests {
     }
 
     #[test]
-    fn app_urls_include_local_and_preview_hosts_but_exclude_reference_links() {
-        for url in [
-            "http://localhost:8766/a",
-            "http://outbound-dash.localhost:8766/a",
-            "http://127.0.0.1:3000",
-            "http://[::1]:3000",
-            "http://192.168.1.5:3000",
-            "https://sandbox.example.com/a",
-            "https://branch.preview.example.com",
-            "https://branch.vercel.app",
-        ] {
-            assert!(is_app_url(url), "{url}");
-        }
-        for url in [
-            "https://github.com/a",
-            "https://docs.example.com/preview",
-            "https://localhost.evil.com",
-            "https://myvercel.app",
-            "https://localhost@github.com",
-            "file:///tmp/test",
-        ] {
-            assert!(!is_app_url(url), "{url}");
-        }
+    fn reply_links_include_github_and_other_web_urls() {
+        assert_eq!(
+            latest_reply_link("See [pull request](https://github.com/org/repo/pull/42)."),
+            Some(ReplyLink {
+                url: "https://github.com/org/repo/pull/42".into(),
+                label: Some("pull request".into()),
+            })
+        );
+        assert_eq!(
+            latest_reply_link("Read https://docs.example.com/guide"),
+            Some("https://docs.example.com/guide".into())
+        );
+        assert_eq!(latest_reply_link("file:///tmp/test"), None);
     }
 
     #[test]
-    fn reply_urls_ignore_user_tool_and_reference_links_and_keep_last_app_link() {
+    fn reply_urls_ignore_user_and_tool_links_and_keep_last_web_link() {
         let record = |role: &str, text: &str| {
             serde_json::json!({
                 "type": "response_item", "payload": {"type": "message", "role": role,
@@ -377,13 +346,13 @@ mod tests {
             .to_string()
         };
         assert_eq!(
-            reply_url(record("user", "http://localhost:3000").as_bytes()),
+            reply_link(record("user", "http://localhost:3000").as_bytes()),
             None
         );
-        assert_eq!(reply_url(br#"{"type":"response_item","payload":{"type":"function_call_output","output":"http://localhost:3000"}}"#), None);
-        assert_eq!(reply_url(record("assistant", "Open [app](http://outbound-dash.localhost:8766/clients/a?tab=one). See https://github.com/a.").as_bytes()), Some(ReplyLink { url: "http://outbound-dash.localhost:8766/clients/a?tab=one".into(), label: Some("app".into()) }));
+        assert_eq!(reply_link(br#"{"type":"response_item","payload":{"type":"function_call_output","output":"http://localhost:3000"}}"#), None);
+        assert_eq!(reply_link(record("assistant", "Open [app](http://outbound-dash.localhost:8766/clients/a?tab=one). See https://github.com/a.").as_bytes()), Some("https://github.com/a".into()));
         assert_eq!(
-            reply_url(
+            reply_link(
                 record(
                     "assistant",
                     "http://localhost:3000/old then https://sandbox.example.com/new."
@@ -398,17 +367,45 @@ mod tests {
         data.push('\n');
         data.push_str(&record("assistant", "See https://github.com/example/repo"));
         data.push('\n');
-        // Make sure a later large tool result does not evict the last app link.
+        // Make sure a later large tool result does not evict the last assistant link.
         data.push_str(&serde_json::json!({"type":"response_item", "payload":{"type":"function_call_output", "output":"x".repeat(TRANSCRIPT_TAIL_BYTES as usize + 100)}}).to_string());
         std::fs::write(&path, data).unwrap();
         assert_eq!(
             read_latest_reply_url(&path),
             Some(ReplyLink {
-                url: "http://localhost:3000/a".into(),
-                label: Some("App".into())
+                url: "https://github.com/example/repo".into(),
+                label: None
             })
         );
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn newer_parent_reply_wins_over_older_fork_reply() {
+        let record = |timestamp: &str, url: &str| {
+            serde_json::json!({
+                "timestamp": timestamp,
+                "type": "response_item",
+                "payload": {"type": "message", "role": "assistant",
+                    "content": [{"type": "output_text", "text": url}]}
+            })
+            .to_string()
+        };
+        let child =
+            reply_url(record("2026-10-03T02:42:11.060Z", "http://app.localhost:19010").as_bytes())
+                .unwrap();
+        let parent = reply_url(
+            record(
+                "2026-10-03T03:13:29.213Z",
+                "https://github.com/kalenjordan/outbound-dash/pull/48",
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(
+            newest_reply_link([child, parent].into_iter()),
+            Some("https://github.com/kalenjordan/outbound-dash/pull/48".into())
+        );
     }
 
     #[test]

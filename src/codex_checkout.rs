@@ -23,6 +23,63 @@ struct CheckoutIndex {
 
 static INDEX: OnceLock<Mutex<CheckoutIndex>> = OnceLock::new();
 
+pub(crate) struct PresentationContext {
+    pub session_id: Option<String>,
+    pub checkout: PathBuf,
+}
+
+/// Resolve the focused Codex pane's display context without changing its
+/// persisted, resumable session identity.
+pub(crate) fn presentation_context(
+    reported_session_id: Option<&str>,
+    terminal_cwd: &Path,
+    detection_text: Option<&str>,
+) -> PresentationContext {
+    let live_checkout = detection_text.and_then(|text| validated_live_checkout(terminal_cwd, text));
+    if let Some(checkout) = live_checkout {
+        let session_id = checkout_index().and_then(|index| {
+            presentation_session_for_checkout(&index.sessions, reported_session_id, &checkout)
+        });
+        return PresentationContext {
+            session_id,
+            checkout,
+        };
+    }
+
+    let checkout = reported_session_id
+        .and_then(|session_id| load_checkout(session_id, terminal_cwd))
+        .unwrap_or_else(|| terminal_cwd.to_path_buf());
+    PresentationContext {
+        session_id: reported_session_id.map(str::to_owned),
+        checkout,
+    }
+}
+
+fn validated_live_checkout(terminal_cwd: &Path, detection_text: &str) -> Option<PathBuf> {
+    let path = crate::codex_recovery::footer_checkout(detection_text)?;
+    crate::workspace::git_space_metadata(terminal_cwd)
+        .zip(crate::workspace::git_space_metadata(&path))
+        .filter(|(terminal, displayed)| terminal.key == displayed.key)
+        .map(|_| path)
+}
+
+fn presentation_session_for_checkout(
+    sessions: &HashMap<String, SessionMetadata>,
+    reported_session_id: Option<&str>,
+    checkout: &Path,
+) -> Option<String> {
+    if let Some(id) = reported_session_id.filter(|id| {
+        sessions
+            .get(*id)
+            .is_some_and(|session| session.cwd == checkout)
+    }) {
+        return Some(id.to_owned());
+    }
+    let mut matches = sessions.values().filter(|session| session.cwd == checkout);
+    let only = matches.next()?;
+    matches.next().is_none().then(|| only.id.clone())
+}
+
 pub(crate) fn load_checkout(session_id: &str, terminal_cwd: &Path) -> Option<PathBuf> {
     let mut index = checkout_index()?;
     let cwd = resolve_checkout(&index.sessions, session_id)?;
@@ -278,5 +335,104 @@ mod tests {
         );
         let cycle = sessions(&[("a", "/a", Some("b")), ("b", "/b", Some("a"))]);
         assert_eq!(resolve_checkout(&cycle, "a"), None);
+    }
+
+    #[test]
+    fn presentation_session_uses_unique_live_checkout_when_report_is_stale_or_missing() {
+        let index = sessions(&[
+            ("stale", "/repo", None),
+            ("smartlead", "/worktrees/smartlead", None),
+            ("audio", "/worktrees/audio", None),
+        ]);
+        assert_eq!(
+            presentation_session_for_checkout(
+                &index,
+                Some("stale"),
+                Path::new("/worktrees/smartlead")
+            ),
+            Some("smartlead".into())
+        );
+        assert_eq!(
+            presentation_session_for_checkout(&index, None, Path::new("/worktrees/audio")),
+            Some("audio".into())
+        );
+    }
+
+    #[test]
+    fn presentation_session_keeps_reported_fork_and_rejects_ambiguous_checkout() {
+        let index = sessions(&[
+            ("parent", "/worktree", None),
+            ("child", "/worktree", Some("parent")),
+            ("stale", "/repo", None),
+        ]);
+        assert_eq!(
+            presentation_session_for_checkout(&index, Some("parent"), Path::new("/worktree")),
+            Some("parent".into())
+        );
+        assert_eq!(
+            presentation_session_for_checkout(&index, Some("stale"), Path::new("/worktree")),
+            None
+        );
+    }
+
+    #[test]
+    fn live_checkout_must_belong_to_terminal_repository() {
+        use std::process::Command;
+
+        let base =
+            std::env::temp_dir().join(format!("herdr-codex-presentation-{}", std::process::id()));
+        let repo = base.join("repo");
+        let worktree = base.join("worktree");
+        let unrelated = base.join("unrelated");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&unrelated).unwrap();
+        let git = |cwd: &Path, args: &[&str]| {
+            assert!(Command::new("git")
+                .args(args)
+                .current_dir(cwd)
+                .status()
+                .unwrap()
+                .success());
+        };
+        git(&repo, &["init", "--quiet"]);
+        git(
+            &repo,
+            &[
+                "-c",
+                "user.name=Herdr Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "-m",
+                "base",
+            ],
+        );
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                "-b",
+                "test-worktree",
+                worktree.to_str().unwrap(),
+            ],
+        );
+        git(&unrelated, &["init", "--quiet"]);
+
+        let footer = |path: &Path| {
+            format!(
+                "GPT-6.1-Sol low · Task · repo · {} · branch\n← for agents · ? for shortcuts",
+                path.display()
+            )
+        };
+        assert_eq!(
+            validated_live_checkout(&repo, &footer(&worktree)),
+            Some(worktree.clone())
+        );
+        assert_eq!(validated_live_checkout(&repo, &footer(&unrelated)), None);
+        std::fs::remove_dir_all(base).unwrap();
     }
 }
