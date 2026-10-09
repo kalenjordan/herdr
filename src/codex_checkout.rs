@@ -10,6 +10,8 @@ struct SessionMetadata {
     id: String,
     cwd: PathBuf,
     forked_from_id: Option<String>,
+    #[serde(default)]
+    timestamp: Option<String>,
 }
 
 #[derive(Default)]
@@ -75,9 +77,19 @@ fn presentation_session_for_checkout(
     }) {
         return Some(id.to_owned());
     }
-    let mut matches = sessions.values().filter(|session| session.cwd == checkout);
-    let only = matches.next()?;
-    matches.next().is_none().then(|| only.id.clone())
+    let mut matches: Vec<_> = sessions
+        .values()
+        .filter(|session| session.cwd == checkout)
+        .collect();
+    matches.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    let newest = matches.first()?;
+    // ISO 8601 header timestamps order conversation creation, not transcript writes.
+    // Keep ambiguous or timestamp-less histories from selecting an arbitrary session.
+    if matches.len() > 1 && (newest.timestamp.is_none() || newest.timestamp == matches[1].timestamp)
+    {
+        return None;
+    }
+    Some(newest.id.clone())
 }
 
 pub(crate) fn load_checkout(session_id: &str, terminal_cwd: &Path) -> Option<PathBuf> {
@@ -247,6 +259,7 @@ mod tests {
                         id: id.to_string(),
                         cwd: PathBuf::from(cwd),
                         forked_from_id: parent.map(str::to_owned),
+                        timestamp: None,
                     },
                 )
             })
@@ -371,6 +384,31 @@ mod tests {
         );
         assert_eq!(
             presentation_session_for_checkout(&index, Some("stale"), Path::new("/worktree")),
+            None
+        );
+    }
+
+    #[test]
+    fn presentation_session_selects_newest_conversation_without_overriding_report() {
+        let mut index = sessions(&[
+            ("old", "/worktree", None),
+            ("new", "/worktree", None),
+            ("other", "/other", None),
+        ]);
+        index.get_mut("old").unwrap().timestamp = Some("2026-10-09T10:48:46.000Z".into());
+        index.get_mut("new").unwrap().timestamp = Some("2026-10-09T17:35:09.816Z".into());
+        index.get_mut("other").unwrap().timestamp = Some("2026-10-10T00:00:00.000Z".into());
+        assert_eq!(
+            presentation_session_for_checkout(&index, None, Path::new("/worktree")),
+            Some("new".into())
+        );
+        assert_eq!(
+            presentation_session_for_checkout(&index, Some("old"), Path::new("/worktree")),
+            Some("old".into())
+        );
+        index.get_mut("old").unwrap().timestamp = index["new"].timestamp.clone();
+        assert_eq!(
+            presentation_session_for_checkout(&index, None, Path::new("/worktree")),
             None
         );
     }
