@@ -13,6 +13,7 @@
 - Added tab-aware switchers: `cmd+e` cycles recently used tabs and `cmd+d` cycles tabs containing done or blocked agents, switching when Command is released.
 
 ### Fixed
+- The project picker includes every open workspace, including multiple workspaces sharing a directory outside the configured project directories.
 - Codex context usage and reply links fall back to the newest conversation in the displayed worktree when the pane has no matching session report.
 - Live handoff preserves session metadata for multiple already-running panes attached to the same Codex session; cold-start duplicate launch protection stays enabled.
 - Resumed Codex sessions missing a pane hook report recover their identity from process-owned TUI evidence, so Git badges follow the active worktree instead of the terminal's launch directory.

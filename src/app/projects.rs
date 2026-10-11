@@ -18,55 +18,7 @@ impl App {
     }
 
     fn discover_project_entries(&self) -> Vec<ProjectPickerEntry> {
-        let mut paths = configured_project_paths(&self.state.project_directories);
-        paths.extend(
-            self.state
-                .workspaces
-                .iter()
-                .map(|workspace| workspace.identity_cwd.clone()),
-        );
-        paths.sort_by_key(|path| project_name(path).to_lowercase());
-        paths.dedup_by(|left, right| canonical(left) == canonical(right));
-
-        let mut entries: Vec<_> = paths
-            .into_iter()
-            .flat_map(|path| {
-                let canonical_path = canonical(&path);
-                let workspace_idx = self
-                    .state
-                    .workspaces
-                    .iter()
-                    .position(|workspace| canonical(&workspace.identity_cwd) == canonical_path);
-                let Some(workspace_idx) = workspace_idx else {
-                    return vec![ProjectPickerEntry {
-                        name: project_name(&path),
-                        tab_name: None,
-                        path: canonical_path,
-                        workspace_idx: None,
-                        tab_idx: None,
-                    }];
-                };
-                let Some(workspace) = self.state.workspaces.get(workspace_idx) else {
-                    return Vec::new();
-                };
-                let name =
-                    workspace.display_name_from(&self.state.terminals, &self.terminal_runtimes);
-                workspace
-                    .tabs
-                    .iter()
-                    .enumerate()
-                    .map(|(tab_idx, _)| ProjectPickerEntry {
-                        name: name.clone(),
-                        tab_name: workspace.tab_display_name(tab_idx),
-                        path: canonical_path.clone(),
-                        workspace_idx: Some(workspace_idx),
-                        tab_idx: Some(tab_idx),
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        sort_project_entries(&mut entries, &self.state.project_priorities);
-        entries
+        discover_project_entries(&self.state, &self.terminal_runtimes)
     }
 
     pub(crate) fn handle_project_picker_key(&mut self, key: KeyEvent) {
@@ -240,6 +192,44 @@ impl AppState {
     }
 }
 
+fn discover_project_entries(
+    state: &AppState,
+    terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
+) -> Vec<ProjectPickerEntry> {
+    let mut entries = Vec::new();
+    let mut open_paths = std::collections::HashSet::new();
+    for (workspace_idx, workspace) in state.workspaces.iter().enumerate() {
+        let path = canonical(&workspace.identity_cwd);
+        open_paths.insert(path.clone());
+        let name = workspace.display_name_from(&state.terminals, terminal_runtimes);
+        for (tab_idx, _) in workspace.tabs.iter().enumerate() {
+            entries.push(ProjectPickerEntry {
+                name: name.clone(),
+                tab_name: workspace.tab_display_name(tab_idx),
+                path: path.clone(),
+                workspace_idx: Some(workspace_idx),
+                tab_idx: Some(tab_idx),
+            });
+        }
+    }
+    let mut seen_paths = open_paths;
+    for path in configured_project_paths(&state.project_directories) {
+        let name = project_name(&path);
+        let path = canonical(&path);
+        if seen_paths.insert(path.clone()) {
+            entries.push(ProjectPickerEntry {
+                name,
+                tab_name: None,
+                path,
+                workspace_idx: None,
+                tab_idx: None,
+            });
+        }
+    }
+    sort_project_entries(&mut entries, &state.project_priorities);
+    entries
+}
+
 fn sort_project_entries(entries: &mut [ProjectPickerEntry], priorities: &[PathBuf]) {
     entries.sort_by_key(|entry| {
         (
@@ -304,6 +294,67 @@ fn configured_project_paths(directories: &[PathBuf]) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn discovery_preserves_symlink_name_and_deduplicates_open_target() {
+        let root = std::env::temp_dir().join(format!(
+            "herdr-project-picker-symlink-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let projects = root.join("repos");
+        let target = root.join("internal-app");
+        std::fs::create_dir_all(&projects).unwrap();
+        std::fs::create_dir(&target).unwrap();
+        std::os::unix::fs::symlink(&target, projects.join("client-app")).unwrap();
+
+        let mut state = AppState::test_new();
+        state.workspaces.clear();
+        state.project_directories = vec![projects];
+        let runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+        state.project_picker.entries = discover_project_entries(&state, &runtimes);
+        assert_eq!(state.project_picker.entries.len(), 1);
+        assert_eq!(state.project_picker.entries[0].name, "client-app");
+        assert_eq!(state.project_picker.entries[0].path, canonical(&target));
+        state.project_picker.query = "client-app".into();
+        assert_eq!(state.filtered_project_indices(), vec![0]);
+
+        let mut workspace = crate::workspace::Workspace::test_new("Open target");
+        workspace.identity_cwd = target;
+        state.workspaces.push(workspace);
+        state.project_picker.entries = discover_project_entries(&state, &runtimes);
+        assert_eq!(state.project_picker.entries.len(), 1);
+        assert_eq!(state.project_picker.entries[0].workspace_idx, Some(0));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn discovery_includes_every_open_workspace_outside_project_directories() {
+        let mut state = AppState::test_new();
+        state.workspaces = vec![
+            crate::workspace::Workspace::test_new("Personal"),
+            crate::workspace::Workspace::test_new("Scratch"),
+        ];
+        for workspace in &mut state.workspaces {
+            workspace.identity_cwd = "/outside/projects/shared".into();
+        }
+        let runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+        state.project_picker.entries = discover_project_entries(&state, &runtimes);
+        assert_eq!(state.project_picker.entries.len(), 2);
+        for workspace_idx in 0..2 {
+            assert!(state.project_picker.entries.iter().any(|entry| {
+                entry.workspace_idx == Some(workspace_idx) && entry.tab_idx == Some(0)
+            }));
+        }
+        state.project_picker.query = "scratch".into();
+        let matches = state.project_picker_visible_entries();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].workspace_idx, Some(1));
+    }
 
     #[test]
     fn configured_projects_include_non_git_directories() {
