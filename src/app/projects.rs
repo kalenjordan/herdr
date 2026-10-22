@@ -27,7 +27,7 @@ impl App {
             KeyCode::Enter => self.accept_project_picker_selection(),
             KeyCode::Backspace => {
                 self.state.project_picker.query.pop();
-                self.clamp_project_picker_selection();
+                self.state.reset_project_picker_search();
             }
             KeyCode::Up => self.move_project_picker_selection(-1),
             KeyCode::Down => self.move_project_picker_selection(1),
@@ -39,13 +39,13 @@ impl App {
             }
             KeyCode::Char('u') if key.modifiers == KeyModifiers::CONTROL => {
                 self.state.project_picker.query.clear();
-                self.clamp_project_picker_selection();
+                self.state.reset_project_picker_search();
             }
             KeyCode::Char(character)
                 if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
             {
                 self.state.project_picker.query.push(character);
-                self.clamp_project_picker_selection();
+                self.state.reset_project_picker_search();
             }
             _ => {}
         }
@@ -62,19 +62,14 @@ impl App {
         self.ensure_project_picker_selection_visible();
     }
 
-    fn clamp_project_picker_selection(&mut self) {
-        let count = self.state.filtered_project_indices().len();
-        self.state.project_picker.selected = self
-            .state
-            .project_picker
-            .selected
-            .min(count.saturating_sub(1));
-        self.state.project_picker.error = None;
-        self.ensure_project_picker_selection_visible();
-    }
-
     fn ensure_project_picker_selection_visible(&mut self) {
         let viewport = self.state.project_picker_body_rect().height as usize;
+        let count = self.state.filtered_project_indices().len();
+        self.state.project_picker.scroll = self
+            .state
+            .project_picker
+            .scroll
+            .min(count.saturating_sub(viewport));
         if viewport == 0 {
             self.state.project_picker.scroll = 0;
         } else if self.state.project_picker.selected < self.state.project_picker.scroll {
@@ -165,6 +160,12 @@ impl App {
 }
 
 impl AppState {
+    pub(crate) fn reset_project_picker_search(&mut self) {
+        self.project_picker.selected = 0;
+        self.project_picker.scroll = 0;
+        self.project_picker.error = None;
+    }
+
     pub(crate) fn filtered_project_indices(&self) -> Vec<usize> {
         let query = normalize_search(&self.project_picker.query);
         self.project_picker
@@ -197,10 +198,8 @@ fn discover_project_entries(
     terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
 ) -> Vec<ProjectPickerEntry> {
     let mut entries = Vec::new();
-    let mut open_paths = std::collections::HashSet::new();
     for (workspace_idx, workspace) in state.workspaces.iter().enumerate() {
         let path = canonical(&workspace.identity_cwd);
-        open_paths.insert(path.clone());
         let name = workspace.display_name_from(&state.terminals, terminal_runtimes);
         for (tab_idx, _) in workspace.tabs.iter().enumerate() {
             entries.push(ProjectPickerEntry {
@@ -212,7 +211,7 @@ fn discover_project_entries(
             });
         }
     }
-    let mut seen_paths = open_paths;
+    let mut seen_paths = std::collections::HashSet::new();
     for path in configured_project_paths(&state.project_directories) {
         let name = project_name(&path);
         let path = canonical(&path);
@@ -295,9 +294,67 @@ fn configured_project_paths(directories: &[PathBuf]) -> Vec<PathBuf> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn narrowing_project_search_resets_scrolled_selection() {
+        let mut state = AppState::test_new();
+        state.project_picker.entries = (0..30)
+            .map(|index| ProjectPickerEntry {
+                name: format!("outbound-stage-{index}"),
+                tab_name: None,
+                path: format!("/repos/outbound-stage-{index}").into(),
+                workspace_idx: None,
+                tab_idx: None,
+            })
+            .chain(std::iter::once(ProjectPickerEntry {
+                name: "outbound-dash".into(),
+                tab_name: None,
+                path: "/repos/outbound-dash".into(),
+                workspace_idx: None,
+                tab_idx: None,
+            }))
+            .collect();
+        state.project_picker.selected = 29;
+        state.project_picker.scroll = 20;
+        state.project_picker.query = "outbound".into();
+        state.reset_project_picker_search();
+        assert_eq!(state.filtered_project_indices().len(), 31);
+        assert_eq!(state.project_picker.selected, 0);
+        assert_eq!(state.project_picker.scroll, 0);
+
+        state.project_picker.selected = 30;
+        state.project_picker.scroll = 20;
+        state.project_picker.query = "outbound-d".into();
+        state.reset_project_picker_search();
+        assert_eq!(state.filtered_project_indices(), vec![30]);
+        assert_eq!(state.project_picker.selected, 0);
+        assert_eq!(state.project_picker.scroll, 0);
+        assert_eq!(
+            state.project_picker_visible_entries()[0].name,
+            "outbound-dash"
+        );
+    }
+
+    #[test]
+    fn small_project_result_lists_fit_without_scrolling() {
+        let mut state = AppState::test_new();
+        state.view.terminal_area = ratatui::layout::Rect::new(0, 0, 120, 40);
+        for count in 1..=15 {
+            state.project_picker.entries = (0..count)
+                .map(|index| ProjectPickerEntry {
+                    name: format!("project-{index}"),
+                    tab_name: None,
+                    path: format!("/repos/project-{index}").into(),
+                    workspace_idx: None,
+                    tab_idx: None,
+                })
+                .collect();
+            assert!(state.project_picker_body_rect().height as usize >= count);
+        }
+    }
+
     #[cfg(unix)]
     #[test]
-    fn discovery_preserves_symlink_name_and_deduplicates_open_target() {
+    fn discovery_preserves_repo_option_alongside_open_target() {
         let root = std::env::temp_dir().join(format!(
             "herdr-project-picker-symlink-{}-{}",
             std::process::id(),
@@ -327,8 +384,26 @@ mod tests {
         workspace.identity_cwd = target;
         state.workspaces.push(workspace);
         state.project_picker.entries = discover_project_entries(&state, &runtimes);
-        assert_eq!(state.project_picker.entries.len(), 1);
-        assert_eq!(state.project_picker.entries[0].workspace_idx, Some(0));
+        assert_eq!(state.project_picker.entries.len(), 2);
+        let open = state
+            .project_picker
+            .entries
+            .iter()
+            .find(|entry| entry.workspace_idx == Some(0))
+            .unwrap();
+        let repo = state
+            .project_picker
+            .entries
+            .iter()
+            .find(|entry| entry.workspace_idx.is_none())
+            .unwrap();
+        assert_eq!(open.path, repo.path);
+        assert_eq!(repo.name, "client-app");
+        assert_eq!(repo.tab_idx, None);
+        state.project_picker.query = "client-app".into();
+        let matches = state.project_picker_visible_entries();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].workspace_idx, None);
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -354,6 +429,24 @@ mod tests {
         let matches = state.project_picker_visible_entries();
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].workspace_idx, Some(1));
+    }
+
+    #[test]
+    fn renamed_open_workspace_is_searchable_by_repository_and_workspace_name() {
+        let mut state = AppState::test_new();
+        let mut workspace = crate::workspace::Workspace::test_new("clever");
+        workspace.identity_cwd = "/repos/outbound-dash".into();
+        state.workspaces = vec![workspace];
+        let runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+        state.project_picker.entries = discover_project_entries(&state, &runtimes);
+        for query in ["outbound-dash", "clever"] {
+            state.project_picker.query = query.into();
+            let entries = state.project_picker_visible_entries();
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].name, "clever");
+            assert_eq!(entries[0].workspace_idx, Some(0));
+            assert_eq!(entries[0].tab_idx, Some(0));
+        }
     }
 
     #[test]

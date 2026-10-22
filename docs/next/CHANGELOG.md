@@ -13,6 +13,8 @@
 - Added tab-aware switchers: `cmd+e` cycles recently used tabs and `cmd+d` cycles tabs containing done or blocked agents, switching when Command is released.
 
 ### Fixed
+- The project picker keeps a new-workspace option for each repository even when that directory is already open in another workspace.
+- Project picker searches reset the scroll position so matching projects remain visible, and small result lists have room for every row.
 - Clearing a Codex conversation no longer associates its replacement session with another recently launched Codex pane, restoring automatic tab naming.
 - The project picker includes every open workspace, including multiple workspaces sharing a directory outside the configured project directories.
 - Codex context usage and reply links fall back to the newest conversation in the displayed worktree when the pane has no matching session report.

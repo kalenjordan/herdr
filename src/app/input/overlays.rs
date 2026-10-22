@@ -311,7 +311,7 @@ impl AppState {
         let desired_height = self
             .project_picker_visible_entries()
             .len()
-            .saturating_add(4) as u16;
+            .saturating_add(5) as u16;
         let height = desired_height.clamp(8, 20).min(area.height.max(1));
         Rect::new(
             area.x + area.width.saturating_sub(width) / 2,

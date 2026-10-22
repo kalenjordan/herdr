@@ -167,8 +167,7 @@ impl App {
             }
             Mode::ProjectPicker => {
                 self.state.project_picker.query.push_str(text);
-                self.state.project_picker.selected = 0;
-                self.state.project_picker.error = None;
+                self.state.reset_project_picker_search();
                 true
             }
             Mode::Copy => {

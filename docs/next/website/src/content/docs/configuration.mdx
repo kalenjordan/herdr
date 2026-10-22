@@ -208,7 +208,7 @@ next_tab = ["prefix+n", "ctrl+alt+]"]
 
 `done_or_blocked_workspace` opens the same switcher filtered to tabs containing a done or blocked agent, ordered oldest-waiting first. Press Command-D again to cycle, then release Command to switch.
 
-`project_picker` opens a typeahead containing open workspaces and immediate subdirectories found under the configured project directories. Every open workspace is included, even outside those directories or when multiple workspaces share the same directory. Selecting an open workspace focuses it. Selecting an unopened directory creates a workspace there and starts the configured command.
+`project_picker` opens a typeahead containing open workspaces and immediate subdirectories found under the configured project directories. Every open workspace is included, even outside those directories or when multiple workspaces share the same directory. Entries marked `open` focus the existing workspace or tab. Every configured project directory also retains an entry marked `new`, even when it is already open elsewhere. Selecting `new` creates a separate workspace named after the directory and starts the configured command.
 
 ```toml
 [projects]

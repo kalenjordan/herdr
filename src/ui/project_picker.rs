@@ -76,7 +76,7 @@ pub(super) fn render_project_picker_overlay(app: &AppState, frame: &mut Frame) {
             let status = if entry.workspace_idx.is_some() {
                 "open"
             } else {
-                "repo"
+                "new"
             };
             let status_width = 8usize;
             let label_width = rect.width.saturating_sub(status_width as u16 + 4) as usize;
