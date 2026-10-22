@@ -174,10 +174,12 @@ def live_pane_id():
                   and same_checkout_family(pane) and pane.get("agent") == "codex"]
     started_at = transcript_started_at()
     matches = []
-    if started_at:
+    # /clear retains an older process. A nearby launch belongs to another
+    # session and must never take precedence over the focused-tab recovery.
+    if started_at and session_start_source != "clear":
         for pane in candidates:
             claimed = (pane.get("agent_session") or {}).get("value")
-            if claimed and claimed != agent_session_id and session_start_source != "clear":
+            if claimed and claimed != agent_session_id:
                 continue
             info = request("pane.process_info", {"pane_id": pane.get("pane_id")})
             processes = (info or {}).get("result", {}).get("process_info", {}).get("foreground_processes", [])

@@ -13,6 +13,7 @@
 - Added tab-aware switchers: `cmd+e` cycles recently used tabs and `cmd+d` cycles tabs containing done or blocked agents, switching when Command is released.
 
 ### Fixed
+- Clearing a Codex conversation no longer associates its replacement session with another recently launched Codex pane, restoring automatic tab naming.
 - The project picker includes every open workspace, including multiple workspaces sharing a directory outside the configured project directories.
 - Codex context usage and reply links fall back to the newest conversation in the displayed worktree when the pane has no matching session report.
 - Live handoff preserves session metadata for multiple already-running panes attached to the same Codex session; cold-start duplicate launch protection stays enabled.

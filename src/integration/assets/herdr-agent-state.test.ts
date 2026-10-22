@@ -275,7 +275,11 @@ test("shared-server hook matches a delayed worktree session and rejects ambiguou
   } finally { await rm(fixture, { recursive: true, force: true }); }
 });
 
-test("Codex clear claims the focused numeric tab despite a stale inherited pane", async () => {
+test("Codex clear ignores a recently launched neighboring process", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "herdr-clear-process-"));
+  const bin = join(fixture, "bin");
+  await mkdir(bin);
+  await writeFile(join(bin, "ps"), '#!/bin/sh\ncase "$*" in *ppid=*) echo 1;; *) echo "Thu Oct  1 19:02:28 2026";; esac\n', { mode: 0o755 });
   const recordingSocketPath = join(tmpdir(), `herdr-codex-clear-${process.pid}.sock`);
   socketPath = recordingSocketPath;
   await rm(recordingSocketPath, { force: true });
@@ -299,7 +303,9 @@ test("Codex clear claims the focused numeric tab despite a stale inherited pane"
       } else if (request.method === "tab.get") {
         socket.end('{"result":{"tab":{"label":"5"}}}\n');
       } else if (request.method === "pane.process_info") {
-        socket.end('{"result":{"process_info":{"foreground_processes":[]}}}\n');
+        socket.end(JSON.stringify({ result: { process_info: { foreground_processes:
+          request.params.pane_id === "other:p1" ? [{ name: "codex", pid: 99999999 }] : []
+        } } }) + "\n");
       } else {
         reportedPanes.push(request.params.pane_id);
         socket.end('{"result":{"type":"ok"}}\n');
@@ -309,11 +315,12 @@ test("Codex clear claims the focused numeric tab despite a stale inherited pane"
   await new Promise<void>((resolve) => server?.listen(recordingSocketPath, resolve));
   const runHook = async () => {
     const child = spawn("sh", [join(import.meta.dir, "codex/herdr-agent-state.sh"), "session"], {
-      env: { ...process.env, HERDR_ENV: "1", HERDR_PANE_ID: "other:p1", HERDR_SOCKET_PATH: recordingSocketPath },
+      env: { ...process.env, PATH: bin + ":" + process.env.PATH, HERDR_ENV: "1", HERDR_PANE_ID: "other:p1", HERDR_SOCKET_PATH: recordingSocketPath },
       stdio: ["pipe", "pipe", "pipe"],
     });
     child.stdin.end(JSON.stringify({ hook_event_name: "SessionStart", source: "clear",
-      session_id: "new-session", cwd: "/project" }));
+      session_id: "new-session", cwd: "/project",
+      transcript_path: join(fixture, "rollout-2026-10-01T19-02-34-new-session.jsonl") }));
     expect(await new Promise<number | null>((resolve) => child.on("close", resolve))).toBe(0);
   };
   await runHook();
@@ -321,6 +328,7 @@ test("Codex clear claims the focused numeric tab despite a stale inherited pane"
   focused = false;
   await runHook();
   expect(reportedPanes).toEqual(["live:p1"]);
+  await rm(fixture, { recursive: true, force: true });
 });
 
 test("Pi reports the session replacement source", async () => {
