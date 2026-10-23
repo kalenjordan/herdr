@@ -554,20 +554,9 @@ fn render_recent_workspace_overlay(
             })
             .collect()
     };
-    let mut lines = content;
-    if state.kind == crate::app::state::WorkspaceSwitcherKind::Recent {
-        lines.push(Line::styled(
-            if is_empty {
-                " release cmd to close"
-            } else {
-                " release cmd to switch"
-            },
-            Style::default().fg(app.palette.overlay0),
-        ));
-    }
     frame.render_widget(Clear, area);
     frame.render_widget(
-        Paragraph::new(lines).block(
+        Paragraph::new(content).block(
             Block::default()
                 .borders(Borders::ALL)
                 .title(match state.kind {
