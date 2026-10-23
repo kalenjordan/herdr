@@ -543,7 +543,7 @@ fn render_recent_workspace_overlay(
                     Style::default().fg(app.palette.text)
                 };
                 let tab_style = if idx == state.selected {
-                    style
+                    style.fg(widgets::selected_secondary_fg(&app.palette))
                 } else {
                     Style::default().fg(app.palette.overlay0)
                 };
@@ -554,17 +554,17 @@ fn render_recent_workspace_overlay(
             })
             .collect()
     };
-    let lines: Vec<_> = content
-        .into_iter()
-        .chain(std::iter::once(Line::styled(
+    let mut lines = content;
+    if state.kind == crate::app::state::WorkspaceSwitcherKind::Recent {
+        lines.push(Line::styled(
             if is_empty {
                 " release cmd to close"
             } else {
                 " release cmd to switch"
             },
             Style::default().fg(app.palette.overlay0),
-        )))
-        .collect();
+        ));
+    }
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(lines).block(
@@ -1517,7 +1517,7 @@ mod tests {
             text.contains("no done or blocked tabs to switch to"),
             "screen: {text}"
         );
-        assert!(text.contains("release cmd to close"), "screen: {text}");
+        assert!(!text.contains("release cmd"), "screen: {text}");
     }
 
     fn temp_git_repo(branch: &str) -> std::path::PathBuf {

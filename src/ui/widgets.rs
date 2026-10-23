@@ -36,6 +36,17 @@ pub(super) fn panel_contrast_fg(p: &Palette) -> Color {
     }
 }
 
+pub(super) fn selected_secondary_fg(p: &Palette) -> Color {
+    let foreground = panel_contrast_fg(p);
+    match (foreground, p.accent) {
+        (Color::Rgb(r, g, b), Color::Rgb(ar, ag, ab)) => {
+            let blend = |fg: u8, bg: u8| ((u16::from(fg) * 3 + u16::from(bg)) / 4) as u8;
+            Color::Rgb(blend(r, ar), blend(g, ag), blend(b, ab))
+        }
+        _ => foreground,
+    }
+}
+
 pub(crate) fn centered_popup_rect(area: Rect, popup_w: u16, popup_h: u16) -> Option<Rect> {
     let popup_w = popup_w.min(area.width.saturating_sub(4));
     let popup_h = popup_h.min(area.height.saturating_sub(2));

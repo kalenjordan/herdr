@@ -93,7 +93,7 @@ pub(super) fn render_project_picker_overlay(app: &AppState, frame: &mut Frame) {
             let rendered_label_width =
                 workspace_width + tab_name.as_ref().map(|_| 1).unwrap_or_default() + tab_width;
             let tab_style = if selected {
-                style
+                style.fg(super::widgets::selected_secondary_fg(&app.palette))
             } else {
                 Style::default()
                     .bg(app.palette.panel_bg)
