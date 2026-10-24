@@ -1474,8 +1474,24 @@ impl App {
         if params.text == "/clear"
             && params.keys.len() == 1
             && params.keys[0].eq_ignore_ascii_case("enter")
+            && self.state.suppress_codex_context_for_clear(ws_idx, pane_id)
         {
-            self.state.suppress_codex_context_for_clear(ws_idx, pane_id);
+            // The shared-server SessionStart hook uses the numeric reset label
+            // to identify the focused pane after /clear, just like keyboard input.
+            if let Some(tab_idx) = self.state.workspaces[ws_idx].find_tab_index_for_pane(pane_id) {
+                if let Some((tab_id, number)) = self
+                    .public_tab_id(ws_idx, tab_idx)
+                    .zip(self.state.workspaces[ws_idx].public_tab_number(tab_idx))
+                {
+                    self.runtime_tab_rename(
+                        "api.codex.clear_tab_name",
+                        crate::api::schema::TabRenameParams {
+                            tab_id,
+                            label: number.to_string(),
+                        },
+                    );
+                }
+            }
         }
 
         encode_success(id, ResponseResult::Ok {})
@@ -2106,6 +2122,12 @@ mod tests {
             });
         app.state.context_used_percent = Some(64);
 
+        app.state.workspaces[0].tabs[0].set_custom_name("main".into());
+        let expected_label = app.state.workspaces[0]
+            .public_tab_number(0)
+            .unwrap()
+            .to_string();
+
         let response = app.handle_api_request(crate::api::schema::Request {
             id: "req".into(),
             method: crate::api::schema::Method::PaneSendInput(PaneSendInputParams {
@@ -2120,6 +2142,10 @@ mod tests {
         assert_eq!(rx.try_recv().unwrap(), bytes::Bytes::from_static(b"/clear"));
         assert_eq!(rx.try_recv().unwrap(), bytes::Bytes::from_static(b"\r"));
         assert_eq!(app.state.context_used_percent, None);
+        assert_eq!(
+            app.state.workspaces[0].tabs[0].custom_name.as_deref(),
+            Some(expected_label.as_str())
+        );
         assert_eq!(
             app.state
                 .suppressed_codex_context_sessions

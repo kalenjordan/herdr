@@ -13,6 +13,7 @@
 - Added tab-aware switchers: `cmd+e` cycles recently used tabs and `cmd+d` cycles tabs containing done or blocked agents, switching when Command is released.
 
 ### Fixed
+- Sending Codex `/clear` through the pane API now resets the tab name like keyboard input, allowing the replacement session hook to restore context usage.
 - The project picker keeps a new-workspace option for each repository even when that directory is already open in another workspace.
 - Project picker searches reset the scroll position so matching projects remain visible, and small result lists have room for every row.
 - Clearing a Codex conversation no longer associates its replacement session with another recently launched Codex pane, restoring automatic tab naming.
