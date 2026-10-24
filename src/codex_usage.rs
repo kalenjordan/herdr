@@ -28,8 +28,22 @@ impl std::ops::Deref for ReplyLink {
     }
 }
 
+const MAX_REPLY_LINKS: usize = 5;
+
+fn reply_links(text: &str) -> Vec<ReplyLink> {
+    crate::app::actions::web_urls(text)
+        .into_iter()
+        .rev()
+        .filter_map(|url| labeled_reply_link(text, url))
+        .collect()
+}
+
+#[cfg(test)]
 fn latest_reply_link(text: &str) -> Option<ReplyLink> {
-    let url = crate::app::actions::latest_web_url(text)?;
+    reply_links(text).into_iter().next()
+}
+
+fn labeled_reply_link(text: &str, url: &str) -> Option<ReplyLink> {
     let start = url.as_ptr() as usize - text.as_ptr() as usize;
     let prefix = text.get(..start)?;
     let suffix = text.get(start + url.len()..)?;
@@ -61,7 +75,7 @@ struct TimedReplyLink {
 struct ReplyUrlCacheEntry {
     len: u64,
     modified: Option<std::time::SystemTime>,
-    url: Option<TimedReplyLink>,
+    urls: Vec<TimedReplyLink>,
 }
 
 static REPLY_URLS: OnceLock<Mutex<HashMap<PathBuf, ReplyUrlCacheEntry>>> = OnceLock::new();
@@ -100,38 +114,58 @@ pub(crate) fn load_context_used_percent(session_id: &str) -> Option<u8> {
     read_latest_context_used(&path)
 }
 
-/// Derive a link for the focused session's status display from assistant replies.
-pub(crate) fn load_latest_reply_url(session_id: &str) -> Option<ReplyLink> {
-    newest_reply_link(
+/// Recent distinct assistant links, newest first across the focused session lineage.
+pub(crate) fn load_recent_reply_links(session_id: &str) -> Vec<ReplyLink> {
+    recent_links(
         crate::codex_checkout::reply_session_lineage(session_id)
             .iter()
-            .filter_map(|id| load_session_reply_url(id)),
+            .flat_map(|id| load_session_reply_urls(id)),
     )
+    .into_iter()
+    .map(|candidate| candidate.link)
+    .collect()
 }
 
-fn newest_reply_link(candidates: impl Iterator<Item = TimedReplyLink>) -> Option<ReplyLink> {
-    // Codex transcript timestamps use UTC ISO 8601 strings, so lexical order
-    // follows reply time across a fork and its parent.
+fn recent_links(candidates: impl Iterator<Item = TimedReplyLink>) -> Vec<TimedReplyLink> {
+    let mut candidates: Vec<_> = candidates.collect();
+    candidates.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    let mut seen = std::collections::HashSet::new();
+    candidates.retain(|candidate| seen.insert(candidate.link.url.clone()));
+    candidates.truncate(MAX_REPLY_LINKS);
     candidates
-        .max_by(|a, b| a.timestamp.cmp(&b.timestamp))
+}
+
+#[cfg(test)]
+fn newest_reply_link(candidates: impl Iterator<Item = TimedReplyLink>) -> Option<ReplyLink> {
+    recent_links(candidates)
+        .into_iter()
+        .next()
         .map(|candidate| candidate.link)
 }
 
-fn load_session_reply_url(session_id: &str) -> Option<TimedReplyLink> {
+fn load_session_reply_urls(session_id: &str) -> Vec<TimedReplyLink> {
     if !valid_session_id(session_id) {
-        return None;
+        return Vec::new();
     }
-    let path = cached_session_path(session_id)?;
-    let metadata = std::fs::metadata(&path).ok()?;
+    let Some(path) = cached_session_path(session_id) else {
+        return Vec::new();
+    };
+    load_path_reply_urls(&path)
+}
+
+fn load_path_reply_urls(path: &Path) -> Vec<TimedReplyLink> {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return Vec::new();
+    };
     let modified = metadata.modified().ok();
     let cache = REPLY_URLS.get_or_init(|| Mutex::new(HashMap::new()));
     let previous = cache
         .lock()
         .ok()
-        .and_then(|entries| entries.get(&path).cloned());
+        .and_then(|entries| entries.get(path).cloned());
     if let Some(entry) = previous.as_ref() {
         if entry.len == metadata.len() && entry.modified == modified {
-            return entry.url.clone();
+            return entry.urls.clone();
         }
     }
     // Transcripts append. Scan new output with overlap for a previously partial record;
@@ -140,55 +174,72 @@ fn load_session_reply_url(session_id: &str) -> Option<TimedReplyLink> {
     let lower_bound = previous
         .as_ref()
         .map_or(0, |entry| entry.len.saturating_sub(TRANSCRIPT_TAIL_BYTES));
-    let url = read_latest_reply_url_since(&path, lower_bound)
-        .or_else(|| previous.and_then(|entry| entry.url));
+    let urls = recent_links(
+        read_reply_links_since(path, lower_bound)
+            .into_iter()
+            .chain(previous.into_iter().flat_map(|entry| entry.urls)),
+    );
     if let Ok(mut entries) = cache.lock() {
         entries.insert(
-            path,
+            path.to_path_buf(),
             ReplyUrlCacheEntry {
                 len: metadata.len(),
                 modified,
-                url: url.clone(),
+                urls: urls.clone(),
             },
         );
     }
-    url
+    urls
 }
 
-fn reply_url(line: &[u8]) -> Option<TimedReplyLink> {
-    let record: serde_json::Value = serde_json::from_slice(line).ok()?;
+fn reply_urls(line: &[u8]) -> Vec<TimedReplyLink> {
+    let Ok(record) = serde_json::from_slice::<serde_json::Value>(line) else {
+        return Vec::new();
+    };
     let payload = &record["payload"];
-    if record["type"] == "response_item"
-        && payload["type"] == "message"
-        && payload["role"] == "assistant"
+    if record["type"] != "response_item"
+        || payload["type"] != "message"
+        || payload["role"] != "assistant"
     {
-        let link = payload["content"]
-            .as_array()?
-            .iter()
-            .rev()
-            .find_map(|part| {
-                if part["type"] != "output_text" {
-                    return None;
-                }
-                latest_reply_link(part["text"].as_str()?)
-            })?;
-        return Some(TimedReplyLink {
+        return Vec::new();
+    }
+    let Some(content) = payload["content"].as_array() else {
+        return Vec::new();
+    };
+    content
+        .iter()
+        .rev()
+        .filter(|part| part["type"] == "output_text")
+        .flat_map(|part| reply_links(part["text"].as_str().unwrap_or_default()))
+        .map(|link| TimedReplyLink {
             link,
             timestamp: record["timestamp"].as_str().map(str::to_owned),
-        });
-    }
-    None
+        })
+        .collect()
+}
+
+#[cfg(test)]
+fn reply_url(line: &[u8]) -> Option<TimedReplyLink> {
+    reply_urls(line).into_iter().next()
 }
 
 #[cfg(test)]
 fn read_latest_reply_url(path: &Path) -> Option<ReplyLink> {
-    read_latest_reply_url_since(path, 0).map(|candidate| candidate.link)
+    read_reply_links_since(path, 0)
+        .into_iter()
+        .next()
+        .map(|candidate| candidate.link)
 }
 
-fn read_latest_reply_url_since(path: &Path, lower_bound: u64) -> Option<TimedReplyLink> {
+fn read_reply_links_since(path: &Path, lower_bound: u64) -> Vec<TimedReplyLink> {
+    read_reply_links_since_inner(path, lower_bound).unwrap_or_default()
+}
+
+fn read_reply_links_since_inner(path: &Path, lower_bound: u64) -> Option<Vec<TimedReplyLink>> {
     let mut file = std::fs::File::open(path).ok()?;
     let mut end = file.metadata().ok()?.len();
     let mut remainder = Vec::new();
+    let mut links = Vec::new();
     while end > lower_bound {
         let start = end.saturating_sub(TRANSCRIPT_TAIL_BYTES).max(lower_bound);
         file.seek(SeekFrom::Start(start)).ok()?;
@@ -204,17 +255,21 @@ fn read_latest_reply_url_since(path: &Path, lower_bound: u64) -> Option<TimedRep
                 .map(|idx| idx + 1)
                 .unwrap_or(bytes.len())
         };
-        if let Some(url) = bytes[first_line..]
-            .split(|byte| *byte == b'\n')
-            .rev()
-            .find_map(reply_url)
-        {
-            return Some(url);
+        links = recent_links(
+            links.into_iter().chain(
+                bytes[first_line..]
+                    .split(|byte| *byte == b'\n')
+                    .rev()
+                    .flat_map(reply_urls),
+            ),
+        );
+        if links.len() == MAX_REPLY_LINKS {
+            break;
         }
         remainder = bytes[..first_line].to_vec();
         end = start;
     }
-    None
+    Some(links)
 }
 
 fn cached_session_path(session_id: &str) -> Option<PathBuf> {
@@ -406,6 +461,64 @@ mod tests {
             newest_reply_link([child, parent].into_iter()),
             Some("https://github.com/kalenjordan/outbound-dash/pull/48".into())
         );
+    }
+
+    #[test]
+    fn recent_reply_links_merge_cache_and_lineage_newest_first() {
+        let path =
+            std::env::temp_dir().join(format!("herdr-multiple-links-{}.jsonl", std::process::id()));
+        let record = |timestamp: &str, text: &str| {
+            serde_json::json!({
+            "timestamp": timestamp, "type": "response_item", "payload": {
+                "type": "message", "role": "assistant", "content": [{"type":"output_text", "text":text}]
+            }
+        }).to_string() + "\n"
+        };
+        let old = record(
+            "2026-10-24T10:00:00Z",
+            "[Old](https://example.com/a) [Second](https://example.com/b)",
+        );
+        std::fs::write(&path, &old).unwrap();
+        let first = load_path_reply_urls(&path);
+        assert_eq!(
+            first
+                .iter()
+                .map(|c| c.link.url.as_str())
+                .collect::<Vec<_>>(),
+            vec!["https://example.com/b", "https://example.com/a"]
+        );
+        let new = record(
+            "2026-10-24T11:00:00Z",
+            "[Renamed](https://example.com/a) [Newest](https://example.com/c)",
+        );
+        let tool = serde_json::json!({"type":"response_item", "payload":{"type":"function_call_output", "output":"x".repeat(TRANSCRIPT_TAIL_BYTES as usize + 100)}}).to_string();
+        std::fs::write(&path, format!("{old}{new}{tool}\n")).unwrap();
+        let cached = load_path_reply_urls(&path);
+        assert_eq!(
+            cached
+                .iter()
+                .map(|c| c.link.url.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "https://example.com/c",
+                "https://example.com/a",
+                "https://example.com/b"
+            ]
+        );
+        assert_eq!(cached[1].link.label.as_deref(), Some("Renamed"));
+        let parent =
+            reply_urls(record("2026-10-24T12:00:00Z", "https://example.com/parent").as_bytes());
+        let merged = recent_links(cached.into_iter().chain(parent));
+        assert_eq!(merged[0].link.url, "https://example.com/parent");
+        std::fs::write(
+            &path,
+            record("2026-10-24T13:00:00Z", "https://example.com/reset"),
+        )
+        .unwrap();
+        let reset = load_path_reply_urls(&path);
+        assert_eq!(reset.len(), 1);
+        assert_eq!(reset[0].link.url, "https://example.com/reset");
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

@@ -17,7 +17,7 @@ A tab is a layout inside a workspace. Use tabs to separate views like `agents`, 
 
 Tabs are addressable from the CLI and socket API.
 
-On desktop, the tab row shows a clickable link beside the repository dirty count for the latest HTTP or HTTPS URL in the focused Codex session’s replies, including local apps, preview deployments, GitHub, and documentation links. Herdr compares replies across a forked session and its parent by reply time. Later replies without a web URL keep the previous link. The link and Git status follow the focused pane's Codex checkout when its live footer identifies a checkout in the same repository. This uses the local Codex transcript and does not require worktree configuration.
+On desktop, the tab row shows up to five distinct clickable HTTP or HTTPS links beside the repository dirty count, including local apps, preview deployments, GitHub, and documentation links. The most recently sent link appears on the left. Repeated URLs move to their newest position and use their latest label. Herdr compares replies across a forked session and its parent by reply time. Later replies without web URLs keep the previous links. Narrow windows show fewer links so tabs retain room. The links and Git status follow the focused pane's Codex checkout when its live footer identifies a checkout in the same repository. This uses the local Codex transcript and does not require worktree configuration.
 
 ## Pane
 

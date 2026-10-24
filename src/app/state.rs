@@ -1518,8 +1518,8 @@ pub struct AppState {
     pub(crate) plugin_status_items: Vec<crate::plugin_status::PluginStatusItem>,
     /// Context used by the Codex or Claude session in the focused pane, if published by its hook.
     pub(crate) context_used_percent: Option<u8>,
-    /// Derived status-bar link for the currently focused Codex session.
-    pub(crate) recent_reply_url: Option<crate::codex_usage::ReplyLink>,
+    /// Derived status-bar links for the currently focused Codex session.
+    pub(crate) recent_reply_links: Vec<crate::codex_usage::ReplyLink>,
     /// Last client pointer position for presentation-only hover styling.
     pub(crate) mouse_position: Option<ratatui::layout::Position>,
     /// Codex session ids whose transcript usage is stale after a locally submitted `/clear`.
@@ -1570,7 +1570,7 @@ impl AppState {
                 == Some(pane_id)
         {
             self.context_used_percent = None;
-            self.recent_reply_url = None;
+            self.recent_reply_links.clear();
         }
         true
     }
@@ -1922,7 +1922,7 @@ impl AppState {
             installed_plugins: std::collections::HashMap::new(),
             plugin_status_items: Vec::new(),
             context_used_percent: None,
-            recent_reply_url: None,
+            recent_reply_links: Vec::new(),
             mouse_position: None,
             suppressed_codex_context_sessions: std::collections::HashMap::new(),
             plugin_panes: std::collections::HashMap::new(),

@@ -5,7 +5,7 @@
 - Added agent-requested clipboard secret entry with `herdr secret request`, allowing Herdr to update a workspace `.env`, `.env.*`, or `.dev.vars` file without sending the value through the pane or API response.
 
 ### Added
-- The desktop tab row now links to the latest local or preview app URL in the focused Codex session’s replies, beside the repository dirty count.
+- The desktop tab row shows up to five distinct recent web links from the focused Codex session’s replies, newest on the left, with independent click targets beside the repository dirty count.
 - Added a configurable project picker that searches open workspaces and repositories, focuses existing workspaces, and starts an agent in newly opened repositories.
 - Added `herdr codex rename-thread --current <name>` so agents can rename their own live Codex thread through a scoped slash-command injection into the calling pane.
 - Copy mode now supports literal smart-case search with `/` and `?`, repeating with `n` and `N`, match highlighting, and tmux-style cross-line `w`/`b`/`e` word motions. (#1230)
@@ -13,6 +13,8 @@
 - Added tab-aware switchers: `cmd+e` cycles recently used tabs and `cmd+d` cycles tabs containing done or blocked agents, switching when Command is released.
 
 ### Fixed
+- Tab-row reply links use darker text and a persistent underline.
+- Codex reply links and context usage prefer the pane's explicit worktree fork over unrelated newer conversations in the same checkout.
 - Sending Codex `/clear` through the pane API now resets the tab name like keyboard input, allowing the replacement session hook to restore context usage.
 - The project picker keeps a new-workspace option for each repository even when that directory is already open in another workspace.
 - Project picker searches reset the scroll position so matching projects remain visible, and small result lists have room for every row.

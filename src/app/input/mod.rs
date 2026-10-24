@@ -281,15 +281,16 @@ impl App {
 
         if matches!(self.state.mode, Mode::Terminal | Mode::Resize)
             && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
-            && crate::ui::recent_reply_url_rect(&self.state)
-                .contains(ratatui::layout::Position::new(mouse.column, mouse.row))
         {
-            if let Some(url) = self.state.recent_reply_url.as_deref() {
+            if let Some(url) = crate::ui::recent_reply_link_at(
+                &self.state,
+                ratatui::layout::Position::new(mouse.column, mouse.row),
+            ) {
                 if let Err(err) = crate::platform::open_url(url) {
                     tracing::warn!(%err, "failed to open recent app URL");
                 }
+                return;
             }
-            return;
         }
 
         if self.handle_modified_url_click(mouse) {

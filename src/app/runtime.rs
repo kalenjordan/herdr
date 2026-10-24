@@ -664,15 +664,17 @@ impl App {
                 .as_ref()
                 .and_then(|(_, terminal)| terminal.claude_context_used_percent())
         };
-        let url = context.and_then(|context| {
+        let links = context.and_then(|context| {
             context
                 .session_id
                 .as_deref()
-                .and_then(crate::codex_usage::load_latest_reply_url)
+                .map(crate::codex_usage::load_recent_reply_links)
         });
-        let changed = used != self.state.context_used_percent || url != self.state.recent_reply_url;
+        let links = links.unwrap_or_default();
+        let changed =
+            used != self.state.context_used_percent || links != self.state.recent_reply_links;
         self.state.context_used_percent = used;
-        self.state.recent_reply_url = url;
+        self.state.recent_reply_links = links;
         changed
     }
 

@@ -77,6 +77,18 @@ fn presentation_session_for_checkout(
     }) {
         return Some(id.to_owned());
     }
+    // A worktree fork can keep reporting its original session ID. Prefer its
+    // explicit lineage over unrelated conversations created in the same checkout.
+    if let Some(id) = reported_session_id {
+        if let Some(descendant) = resolve_reply_lineage(sessions, id).first() {
+            if sessions
+                .get(descendant)
+                .is_some_and(|session| session.cwd == checkout)
+            {
+                return Some(descendant.clone());
+            }
+        }
+    }
     let mut matches: Vec<_> = sessions
         .values()
         .filter(|session| session.cwd == checkout)
@@ -385,6 +397,22 @@ mod tests {
         assert_eq!(
             presentation_session_for_checkout(&index, Some("stale"), Path::new("/worktree")),
             None
+        );
+    }
+
+    #[test]
+    fn presentation_session_prefers_reported_lineage_over_newer_worktree_conversation() {
+        let mut index = sessions(&[
+            ("reported", "/repo", None),
+            ("active-fork", "/worktree", Some("reported")),
+            ("unrelated-newer", "/worktree", None),
+        ]);
+        index.get_mut("active-fork").unwrap().timestamp = Some("2026-10-23T20:00:59.577Z".into());
+        index.get_mut("unrelated-newer").unwrap().timestamp =
+            Some("2026-10-24T14:01:06.312Z".into());
+        assert_eq!(
+            presentation_session_for_checkout(&index, Some("reported"), Path::new("/worktree")),
+            Some("active-fork".into())
         );
     }
 
