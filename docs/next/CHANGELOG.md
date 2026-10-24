@@ -13,6 +13,7 @@
 - Added tab-aware switchers: `cmd+e` cycles recently used tabs and `cmd+d` cycles tabs containing done or blocked agents, switching when Command is released.
 
 ### Fixed
+- Dense terminal redraws batch adjacent characters instead of repositioning the cursor for every cell, reducing output pressure while scrolling.
 - Tab-row reply links use darker text and a persistent underline.
 - Codex reply links and context usage prefer the pane's explicit worktree fork over unrelated newer conversations in the same checkout.
 - Sending Codex `/clear` through the pane API now resets the tab name like keyboard input, allowing the replacement session hook to restore context usage.

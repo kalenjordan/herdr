@@ -682,8 +682,6 @@ fn close_hyperlink(writer: &mut impl Write, active: &mut Option<String>) {
 
 fn write_cell(
     writer: &mut impl Write,
-    row: u16,
-    col: u16,
     cell: &CellData,
     last_sgr: &mut String,
     active_hyperlink: &mut Option<String>,
@@ -692,8 +690,6 @@ fn write_cell(
     if cell.skip {
         return;
     }
-
-    let _ = write!(writer, "\x1b[{};{}H", row + 1, col + 1);
 
     let sgr = build_sgr(cell.fg, cell.bg, cell.modifier);
     if sgr != *last_sgr {
@@ -730,6 +726,9 @@ fn write_changed_cells(writer: &mut impl Write, frame: &FrameData, prev: &FrameD
     for row in 0..frame.height {
         let mut invalidated = 0usize;
         let mut to_skip = 0usize;
+        // Adjacent changed cells advance the host cursor themselves. Keep an
+        // explicit anchor across gaps and at each row boundary (including wrap).
+        let mut next_column = None;
 
         for col in 0..frame.width {
             let idx = (row as usize) * (frame.width as usize) + (col as usize);
@@ -745,15 +744,12 @@ fn write_changed_cells(writer: &mut impl Write, frame: &FrameData, prev: &FrameD
                 ) || invalidated > 0)
                 && to_skip == 0
             {
-                write_cell(
-                    writer,
-                    row,
-                    col,
-                    cell,
-                    &mut last_sgr,
-                    &mut active_hyperlink,
-                    frame,
-                );
+                if next_column != Some(usize::from(col)) {
+                    write_cursor_position(writer, (col, row));
+                }
+                write_cell(writer, cell, &mut last_sgr, &mut active_hyperlink, frame);
+                let width = cell_width(cell);
+                next_column = (width > 0).then_some(usize::from(col) + width);
             }
 
             to_skip = cell_width(cell).saturating_sub(1);
@@ -1400,6 +1396,52 @@ mod tests {
     }
 
     #[test]
+    fn scrolling_redraw_batches_adjacent_cells() {
+        let prev = make_frame(160, 47, vec![make_cell("a", 0, 0, 0); 160 * 47]);
+        let curr = make_frame(160, 47, vec![make_cell("b", 0, 0, 0); 160 * 47]);
+        let mut output = Vec::new();
+        write_changed_cells(&mut output, &curr, &prev);
+        let output_str = String::from_utf8(output).unwrap();
+        assert_eq!(output_str.matches('H').count(), 47);
+        assert!(
+            output_str.len() < 8_000,
+            "a dense redraw should stay near its text size"
+        );
+    }
+
+    #[test]
+    fn batched_diff_matches_full_redraw_across_gaps_wide_cells_and_rows() {
+        let prev = make_frame(6, 2, vec![make_cell("x", 0, 0, 0); 12]);
+        let curr = make_frame(
+            6,
+            2,
+            ["A", "B", "x", "💡", " ", "C", "D", "x", "E", "F", "G", "H"]
+                .into_iter()
+                .map(|symbol| make_cell(symbol, 0, 0, 0))
+                .collect(),
+        );
+        let mut actual = crate::ghostty::Terminal::new(6, 2, 0).unwrap();
+        let mut expected = crate::ghostty::Terminal::new(6, 2, 0).unwrap();
+        let mut output = Vec::new();
+        blit_frame_to(&mut output, &prev, None);
+        actual.write(&output);
+        output.clear();
+        blit_frame_to(&mut output, &curr, Some(&prev));
+        actual.write(&output);
+        output.clear();
+        blit_frame_to(&mut output, &curr, None);
+        expected.write(&output);
+        for row in 0..2 {
+            for col in 0..6 {
+                assert_eq!(
+                    actual.screen_cell(col, row).unwrap(),
+                    expected.screen_cell(col, row).unwrap()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn blit_frame_size_change_triggers_full_redraw() {
         let prev = make_frame(2, 2, vec![make_cell("A", 0, 0, 0); 4]);
 
@@ -1755,7 +1797,7 @@ mod tests {
 
         assert!(output_str.contains("\x1b[1;1H"));
         assert!(
-            output_str.contains("\x1b[1;2H"),
+            output_str.contains("A "),
             "cells hidden by a previous wide grapheme must be redrawn when they become visible"
         );
     }
