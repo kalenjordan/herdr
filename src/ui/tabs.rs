@@ -133,7 +133,7 @@ fn reply_link_color(palette: &crate::app::state::Palette) -> Color {
 
 fn reply_link_labels(links: &[crate::codex_usage::ReplyLink], area_width: u16) -> Vec<String> {
     let budget = area_width / 2;
-    let count = links.len().min(usize::from(budget / 6));
+    let count = links.len().min(2).min(usize::from(budget / 6));
     if count == 0 {
         return Vec::new();
     }
@@ -1015,6 +1015,7 @@ mod tests {
             "https://example.com/4".into(),
             "https://example.com/5".into(),
         ]);
+        assert_eq!(reply_link_labels(&app.recent_reply_links, 120).len(), 2);
         app.view.tab_bar_rect.width = 30;
         app.refresh_tab_bar_view();
         let labels = reply_link_labels(&app.recent_reply_links, 30);
