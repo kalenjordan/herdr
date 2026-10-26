@@ -13,6 +13,7 @@
 - Added tab-aware switchers: `cmd+e` cycles recently used tabs and `cmd+d` cycles tabs containing done or blocked agents, switching when Command is released.
 
 ### Fixed
+- Tab labels take priority over reply links; links shorten or disappear when the tab row is crowded.
 - Dense terminal redraws batch adjacent characters instead of repositioning the cursor for every cell, reducing output pressure while scrolling.
 - Tab-row reply links use darker text and a persistent underline.
 - Codex reply links and context usage prefer the pane's explicit worktree fork over unrelated newer conversations in the same checkout.
