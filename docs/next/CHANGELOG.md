@@ -13,6 +13,7 @@
 - Added tab-aware switchers: `cmd+e` cycles recently used tabs and `cmd+d` cycles tabs containing done or blocked agents, switching when Command is released.
 
 ### Fixed
+- Terminal input backpressure no longer pauses output reads, preventing fast scrolling in terminal apps from playing back slowly while redraws fill the PTY buffers.
 - Tab labels take priority over reply links; links shorten or disappear when the tab row is crowded.
 - Dense terminal redraws batch adjacent characters instead of repositioning the cursor for every cell, reducing output pressure while scrolling.
 - Tab-row reply links use darker text and a persistent underline.

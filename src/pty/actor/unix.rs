@@ -591,6 +591,9 @@ impl PtyIoActorRunner {
                 ));
             }
             self.flush_pending_writes_once();
+            if !self.pending_writes.is_empty() {
+                let _ = fd::poll_write_ready(self.file.as_raw_fd(), ACTOR_WRITE_READY_POLL_MS);
+            }
         }
         self.state = ActorState::Quiesced;
         Ok(())
@@ -667,7 +670,9 @@ impl PtyIoActorRunner {
                     }
                 }
                 Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                    let _ = fd::poll_write_ready(self.file.as_raw_fd(), ACTOR_WRITE_READY_POLL_MS);
+                    // The main loop polls both directions. Waiting only for writes
+                    // here stalls output reads when the child is itself blocked
+                    // writing a redraw before it can consume more input.
                     return;
                 }
                 Err(err) if err.kind() == std::io::ErrorKind::Interrupted => return,
@@ -845,6 +850,35 @@ mod tests {
         peer.read_exact(&mut buf).expect("peer receives write");
         assert_eq!(&buf, b"hello");
         handle.shutdown();
+    }
+
+    #[test]
+    fn backpressured_input_does_not_delay_output_reads() {
+        let (mut runner, mut peer) = actor_runner_for_unit_test();
+        let (read_tx, read_rx) = std_mpsc::channel();
+        runner.on_read = Box::new(move |bytes| {
+            read_tx.send(Bytes::copy_from_slice(bytes)).expect("output");
+            PtyReadResult::empty()
+        });
+        runner.enqueue_write(Bytes::from(vec![b'x'; 8 * 1024 * 1024]));
+        runner.flush_pending_writes_once();
+        assert!(
+            !runner.pending_writes.is_empty(),
+            "input must be backpressured"
+        );
+
+        let started = Instant::now();
+        for _ in 0..8 {
+            peer.write_all(b"redraw").expect("child output");
+            runner.flush_pending_writes_once();
+            assert!(runner.read_once());
+            assert_eq!(read_rx.try_recv().expect("output read").as_ref(), b"redraw");
+        }
+        assert!(
+            started.elapsed() < Duration::from_millis(200),
+            "full input must not impose write-only waits before output reads"
+        );
+        assert!(!runner.pending_writes.is_empty(), "input remains queued");
     }
 
     #[test]
