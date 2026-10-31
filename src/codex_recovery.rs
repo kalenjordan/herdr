@@ -1,8 +1,33 @@
 //! Recover missing session identity from evidence owned by a live Codex TUI.
 
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
+
+// Recovery polls periodically. Keep missing-evidence diagnostics visible at the
+// default log level without writing the same failure on every poll.
+fn log_missing_evidence(target: &RecoveryTarget, pid: u32) {
+    static LAST_LOGGED: OnceLock<Mutex<HashMap<u32, Instant>>> = OnceLock::new();
+    let Ok(mut logged) = LAST_LOGGED
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+    else {
+        return;
+    };
+    let now = Instant::now();
+    logged.retain(|_, last| now.duration_since(*last) < Duration::from_secs(300));
+    if logged
+        .get(&pid)
+        .is_some_and(|last| now.duration_since(*last) < Duration::from_secs(60))
+    {
+        return;
+    }
+    logged.insert(pid, now);
+    tracing::info!(pane_id = ?target.pane_id, terminal_id = %target.terminal_id, process_pid = pid, reason = "no_process_owned_session_evidence", "Codex session recovery found no association");
+}
 
 use serde::{Deserialize, Serialize};
 
@@ -106,6 +131,10 @@ pub(crate) fn recover(targets: Vec<RecoveryTarget>) -> Vec<RecoveredSession> {
         })
         .collect();
     if processes.is_empty() {
+        tracing::debug!(
+            reason = "no_unique_foreground_codex_process",
+            "Codex session recovery skipped"
+        );
         return Vec::new();
     }
     let input: Vec<_> = processes
@@ -116,8 +145,18 @@ pub(crate) fn recover(targets: Vec<RecoveryTarget>) -> Vec<RecoveredSession> {
         })
         .collect();
     let Some(sessions) = query(&input) else {
+        tracing::debug!(
+            target_count = input.len(),
+            reason = "query_failed",
+            "Codex session recovery failed"
+        );
         return Vec::new();
     };
+    for (target, pid) in &processes {
+        if !sessions.iter().any(|session| session.pid == *pid) {
+            log_missing_evidence(target, *pid);
+        }
+    }
     sessions
         .into_iter()
         .filter_map(|session| {

@@ -287,6 +287,7 @@ impl TerminalState {
                 .as_ref()
                 .is_some_and(|session| crate::detect::parse_agent_label(&session.agent) == agent)
         {
+            tracing::info!(terminal_id = %self.id, session = ?self.persisted_agent_session, reason = "process_exit", "agent session association cleared");
             self.persisted_agent_session = None;
         }
         if self.hook_authority_not_newer_than(now)
@@ -974,11 +975,24 @@ impl TerminalState {
         seq: Option<u64>,
         session_start_source: Option<String>,
     ) -> Option<TerminalStateMutation> {
-        let session_ref = session_ref?;
+        let Some(session_ref) = session_ref else {
+            tracing::warn!(terminal_id = %self.id, %source, %agent_label, reason = "missing_session_ref", "agent session report rejected");
+            return None;
+        };
+        let report_span = tracing::info_span!("agent_session_report", terminal_id = %self.id, %source, %agent_label, ?seq, ?session_start_source, incoming_session = ?session_ref);
+        let _entered = report_span.enter();
         if !self.accept_hook_report(&source, seq) {
+            tracing::warn!(
+                reason = "stale_or_missing_sequence",
+                "agent session report rejected"
+            );
             return None;
         }
         if self.known_agent_label_conflicts_with_detected_agent(&agent_label) {
+            tracing::warn!(
+                reason = "detected_agent_conflict",
+                "agent session report rejected"
+            );
             return None;
         }
         let session_replacement_allowed = Self::session_start_source_allows_session_replacement(
@@ -995,6 +1009,10 @@ impl TerminalState {
                 session_start_source.as_deref(),
             );
         if owner_conflicts && !foreground_takeover_allowed {
+            tracing::warn!(
+                reason = "session_owner_conflict",
+                "agent session report rejected"
+            );
             return None;
         }
         if self
@@ -1006,6 +1024,10 @@ impl TerminalState {
             )
             .is_some()
         {
+            tracing::warn!(
+                reason = "same_owner_session_conflict",
+                "agent session report rejected"
+            );
             return None;
         }
         let replaced_hook_session = self.same_owner_full_lifecycle_hook_authority_session_ref(
@@ -1014,6 +1036,10 @@ impl TerminalState {
             &session_ref,
         );
         if replaced_hook_session.is_some() && !session_replacement_allowed {
+            tracing::warn!(
+                reason = "session_replacement_not_allowed",
+                "agent session report rejected"
+            );
             return None;
         }
 
@@ -1045,6 +1071,13 @@ impl TerminalState {
             session_ref,
         });
         let current_session = self.current_session_identity_for_persistence();
+        if previous_session != current_session {
+            tracing::info!(
+                ?previous_session,
+                ?current_session,
+                "agent session association updated"
+            );
+        }
         Some(TerminalStateMutation {
             effective_state_change: self.recompute_effective_state(
                 previous_agent_label,
@@ -1159,6 +1192,7 @@ impl TerminalState {
         self.suppress_current_full_lifecycle_hook_authority(
             FullLifecycleHookSuppressionReason::HookClear,
         );
+        tracing::info!(terminal_id = %self.id, session = ?previous_session, reason = "hook_authority_cleared", "agent session association cleared");
         self.hook_authority = None;
         self.persisted_agent_session = None;
         Some(TerminalStateMutation {
@@ -1227,6 +1261,7 @@ impl TerminalState {
         self.fallback_observed_at = None;
         self.hook_authority = None;
         if !preserve_foreign_persisted_session {
+            tracing::info!(terminal_id = %self.id, session = ?previous_session, %source, %agent_label, reason = "agent_released", "agent session association cleared");
             self.persisted_agent_session = None;
         }
         let current_session = self.current_session_identity_for_persistence();
@@ -1327,6 +1362,7 @@ impl TerminalState {
     }
 
     pub fn clear_agent_runtime_identity_after_respawn(&mut self) {
+        tracing::info!(terminal_id = %self.id, session = ?self.current_session_identity_for_persistence(), reason = "terminal_respawn", "agent runtime identity cleared");
         self.detected_agent = None;
         self.fallback_state = AgentState::Unknown;
         self.fallback_visible_blocker = false;
