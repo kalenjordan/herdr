@@ -1,4 +1,4 @@
-//! Recover missing session identity from evidence owned by a live Codex TUI.
+//! Reconcile missing or stale session identity using evidence from a live Codex TUI.
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -26,7 +26,7 @@ fn log_missing_evidence(target: &RecoveryTarget, pid: u32) {
         return;
     }
     logged.insert(pid, now);
-    tracing::info!(pane_id = ?target.pane_id, terminal_id = %target.terminal_id, process_pid = pid, reason = "no_process_owned_session_evidence", "Codex session recovery found no association");
+    tracing::info!(pane_id = ?target.pane_id, terminal_id = %target.terminal_id, process_pid = pid, reason = "no_corroborated_session_evidence", "Codex session recovery found no association");
 }
 
 use serde::{Deserialize, Serialize};
@@ -79,6 +79,21 @@ pub(crate) fn footer_checkout(text: &str) -> Option<PathBuf> {
     paths.next().is_none().then_some(path)
 }
 
+pub(crate) fn recovery_checkout(terminal_cwd: &std::path::Path, text: &str) -> Option<PathBuf> {
+    // A narrow footer may truncate the checkout while preserving the complete
+    // title. Python then requires a globally unique title and corroborating final
+    // output, and accepts only an exact transcript/terminal checkout match.
+    footer_title(text)?;
+    if footer_checkout(text).is_some() {
+        return crate::codex_checkout::validated_live_checkout(terminal_cwd, text);
+    }
+    live_footer(text)?
+        .split(" · ")
+        .skip(2)
+        .any(|part| part.contains('…'))
+        .then(|| terminal_cwd.to_path_buf())
+}
+
 fn live_footer(text: &str) -> Option<&str> {
     let mut bottom = text
         .lines()
@@ -99,6 +114,24 @@ pub(crate) struct RecoveryTarget {
     pub shell_pid: u32,
     pub title: String,
     pub report_seq: u64,
+    pub previous_session_id: Option<String>,
+    pub checkout: Option<PathBuf>,
+    pub detection_text: String,
+    pub excluded_session: Option<String>,
+}
+
+impl RecoveryTarget {
+    pub(crate) fn accepts_session_snapshot(
+        &self,
+        current_session: Option<&str>,
+        excluded_session: Option<&str>,
+        recovered_session: &str,
+    ) -> bool {
+        current_session == self.previous_session_id.as_deref()
+            && excluded_session == self.excluded_session.as_deref()
+            && current_session != Some(recovered_session)
+            && excluded_session != Some(recovered_session)
+    }
 }
 
 #[derive(Debug)]
@@ -112,6 +145,9 @@ pub(crate) struct RecoveredSession {
 struct ProcessTarget<'a> {
     pid: u32,
     title: &'a str,
+    checkout: Option<&'a std::path::Path>,
+    detection_text: &'a str,
+    excluded_session: Option<&'a str>,
 }
 
 #[derive(Deserialize)]
@@ -142,6 +178,9 @@ pub(crate) fn recover(targets: Vec<RecoveryTarget>) -> Vec<RecoveredSession> {
         .map(|(target, pid)| ProcessTarget {
             pid: *pid,
             title: &target.title,
+            checkout: target.checkout.as_deref(),
+            detection_text: &target.detection_text,
+            excluded_session: target.excluded_session.as_deref(),
         })
         .collect();
     let Some(sessions) = query(&input) else {
@@ -195,6 +234,48 @@ fn query(targets: &[ProcessTarget<'_>]) -> Option<Vec<ProcessSession>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn narrow_live_footer_can_corroborate_terminal_checkout_but_not_truncated_title() {
+        let cwd = std::path::Path::new("/terminal/checkout");
+        let footer =
+            "GPT-6.1-Sol low · Review calls · repo · ~/rep…\n← for agents · ? for shortcuts";
+        assert_eq!(recovery_checkout(cwd, footer), Some(cwd.to_path_buf()));
+        assert_eq!(
+            recovery_checkout(cwd, &footer.replace("Review calls", "Review…")),
+            None
+        );
+        assert_eq!(
+            recovery_checkout(cwd, &format!("{footer}\nuser transcript")),
+            None
+        );
+        assert_eq!(
+            recovery_checkout(cwd, &footer.replace("~/rep…", "/unrelated/repo")),
+            None
+        );
+    }
+
+    #[test]
+    fn reconciliation_rejects_hook_and_clear_races_and_old_suppressed_identity() {
+        let mut target = RecoveryTarget {
+            pane_id: PaneId::alloc(),
+            terminal_id: TerminalId::alloc(),
+            shell_pid: 1,
+            title: "Current conversation".into(),
+            report_seq: 20,
+            previous_session_id: Some("old".into()),
+            checkout: None,
+            detection_text: String::new(),
+            excluded_session: None,
+        };
+        assert!(target.accepts_session_snapshot(Some("old"), None, "new"));
+        assert!(!target.accepts_session_snapshot(Some("newer-hook"), None, "new"));
+        assert!(!target.accepts_session_snapshot(Some("old"), Some("old"), "new"));
+        assert!(!target.accepts_session_snapshot(Some("old"), None, "old"));
+        target.excluded_session = Some("old".into());
+        assert!(!target.accepts_session_snapshot(Some("old"), Some("old"), "old"));
+        assert!(target.accepts_session_snapshot(Some("old"), Some("old"), "new"));
+    }
 
     #[tokio::test]
     async fn title_recovers_from_live_footer_after_handoff_without_osc() {

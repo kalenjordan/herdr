@@ -57,7 +57,10 @@ pub(crate) fn presentation_context(
     }
 }
 
-fn validated_live_checkout(terminal_cwd: &Path, detection_text: &str) -> Option<PathBuf> {
+pub(crate) fn validated_live_checkout(
+    terminal_cwd: &Path,
+    detection_text: &str,
+) -> Option<PathBuf> {
     let path = crate::codex_recovery::footer_checkout(detection_text)?;
     crate::workspace::git_space_metadata(terminal_cwd)
         .zip(crate::workspace::git_space_metadata(&path))

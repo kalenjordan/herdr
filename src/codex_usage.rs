@@ -350,6 +350,81 @@ fn valid_session_id(value: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn same_checkout_reconciliation_restores_context_and_links_after_clear() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = crate::app::App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state = crate::app::AppState::test_with_adversarial_identity_state();
+        app.state.assert_invariants_for_test();
+        let ws_idx = app.state.active.unwrap();
+        let pane_id = app.state.workspaces[ws_idx].focused_pane_id().unwrap();
+        let terminal_id = app.state.terminal_id_for_pane(ws_idx, pane_id).unwrap();
+        let session_id = format!("reconciled-{}", terminal_id);
+        let path = std::env::temp_dir().join(format!("{session_id}.jsonl"));
+        std::fs::write(&path, concat!(
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"last_token_usage\":{\"total_tokens\":89684},\"model_context_window\":258400}}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"[Call Log](http://localhost:8766/calls)\"}]}}\n"
+        )).unwrap();
+        SESSION_PATHS
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .unwrap()
+            .insert(session_id.clone(), path.clone());
+        let terminal = app.state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.set_detected_state(
+            Some(crate::detect::Agent::Codex),
+            crate::detect::AgentState::Idle,
+        );
+        terminal.set_agent_session_ref_for_session_start(
+            "herdr:codex".into(),
+            "codex".into(),
+            crate::agent_resume::AgentSessionRef::id("old-conversation"),
+            Some(10),
+            Some("resume".into()),
+        );
+        app.state.suppress_codex_context_for_clear(ws_idx, pane_id);
+        app.refresh_context_usage();
+        assert_eq!(app.state.context_used_percent, None);
+        assert!(app.state.recent_reply_links.is_empty());
+
+        // Recovery uses the normal server event path, preserving pane, terminal,
+        // checkout and organization identity while replacing only the session.
+        app.handle_internal_event(crate::events::AppEvent::AgentSessionReported {
+            pane_id,
+            source: "herdr:codex".into(),
+            agent_label: "codex".into(),
+            seq: Some(20),
+            session_ref: crate::agent_resume::AgentSessionRef::id(&session_id),
+            session_start_source: Some("resume".into()),
+        });
+        app.refresh_context_usage();
+        assert_eq!(app.state.context_used_percent, Some(32));
+        assert_eq!(app.state.recent_reply_links.len(), 1);
+        assert_eq!(
+            app.state.recent_reply_links[0].url,
+            "http://localhost:8766/calls"
+        );
+        assert!(app.state.suppressed_codex_context_sessions.is_empty());
+        assert_eq!(
+            app.state.terminal_id_for_pane(ws_idx, pane_id),
+            Some(terminal_id)
+        );
+        app.state.assert_invariants_for_test();
+        std::fs::remove_file(path).unwrap();
+        SESSION_PATHS
+            .get()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .remove(&session_id);
+    }
+
     fn reply_link(line: &[u8]) -> Option<ReplyLink> {
         reply_url(line).map(|candidate| candidate.link)
     }

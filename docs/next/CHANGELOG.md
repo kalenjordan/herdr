@@ -13,6 +13,7 @@
 - Added tab-aware switchers: `cmd+e` cycles recently used tabs and `cmd+d` cycles tabs containing done or blocked agents, switching when Command is released.
 
 ### Fixed
+- Codex panes reconcile stale conversation associations after same-checkout session switches, restoring context usage and reply links even when a session hook is missed.
 - Terminal input backpressure no longer pauses output reads, preventing fast scrolling in terminal apps from playing back slowly while redraws fill the PTY buffers.
 - Tab labels take priority over reply links; links shorten or disappear when the tab row is crowded.
 - Dense terminal redraws batch adjacent characters instead of repositioning the cursor for every cell, reducing output pressure while scrolling.

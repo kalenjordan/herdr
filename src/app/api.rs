@@ -78,10 +78,21 @@ impl App {
                     continue;
                 };
                 if !still_attached
-                    || terminal.codex_session_id().is_some()
+                    || !target.accepts_session_snapshot(
+                        terminal.codex_session_id(),
+                        self.state
+                            .suppressed_codex_context_sessions
+                            .get(&target.terminal_id)
+                            .map(String::as_str),
+                        &session.session_id,
+                    )
                     || terminal.effective_known_agent() != Some(crate::detect::Agent::Codex)
                     || runtime.child_pid() != Some(target.shell_pid)
                     || crate::codex_recovery::current_title(runtime) != target.title
+                    || crate::codex_recovery::recovery_checkout(
+                        &runtime.cwd().unwrap_or_else(|| terminal.cwd.clone()),
+                        &runtime.detection_text(),
+                    ) != target.checkout
                     || !crate::detect::foreground_job(target.shell_pid).is_some_and(|job| {
                         job.processes
                             .iter()
@@ -94,7 +105,7 @@ impl App {
                     pane_id = ?target.pane_id,
                     process_pid = session.process_pid,
                     session_id = %session.session_id,
-                    "recovered missing Codex session from process-owned TUI evidence"
+                    "reconciled Codex session from live TUI evidence"
                 );
                 self.handle_internal_event(AppEvent::AgentSessionReported {
                     pane_id: target.pane_id,

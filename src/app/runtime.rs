@@ -544,9 +544,10 @@ impl App {
     }
 
     fn start_codex_session_recovery(&mut self) {
-        if self.codex_recovery_in_flight {
+        if self.codex_recovery_in_flight || Instant::now() < self.next_codex_recovery {
             return;
         }
+        self.next_codex_recovery = Instant::now() + std::time::Duration::from_secs(5);
         let Some(report_seq) = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .ok()
@@ -562,9 +563,7 @@ impl App {
                     else {
                         continue;
                     };
-                    if terminal.codex_session_id().is_some()
-                        || terminal.effective_known_agent() != Some(crate::detect::Agent::Codex)
-                    {
+                    if terminal.effective_known_agent() != Some(crate::detect::Agent::Codex) {
                         continue;
                     }
                     let Some(runtime) = self.terminal_runtimes.get(&pane.attached_terminal_id)
@@ -576,12 +575,25 @@ impl App {
                     };
                     let title = crate::codex_recovery::current_title(runtime);
                     if !title.is_empty() {
+                        let detection_text = runtime.detection_text();
+                        let cwd = runtime.cwd().unwrap_or_else(|| terminal.cwd.clone());
                         targets.push(crate::codex_recovery::RecoveryTarget {
                             pane_id: *pane_id,
                             terminal_id: pane.attached_terminal_id.clone(),
                             shell_pid,
                             title,
                             report_seq,
+                            previous_session_id: terminal.codex_session_id().map(str::to_owned),
+                            checkout: crate::codex_recovery::recovery_checkout(
+                                &cwd,
+                                &detection_text,
+                            ),
+                            detection_text,
+                            excluded_session: self
+                                .state
+                                .suppressed_codex_context_sessions
+                                .get(&pane.attached_terminal_id)
+                                .cloned(),
                         });
                     }
                 }
