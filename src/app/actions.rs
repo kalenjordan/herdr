@@ -1091,6 +1091,17 @@ impl AppState {
             })
             .cloned()
             .collect();
+        for workspace in &self.workspaces {
+            for tab in &workspace.tabs {
+                let target = crate::app::state::WorkspaceTabTarget {
+                    workspace_id: workspace.id.clone(),
+                    tab_number: tab.number,
+                };
+                if original.as_ref() != Some(&target) && !candidates.contains(&target) {
+                    candidates.push(target);
+                }
+            }
+        }
         let selected = if candidates.is_empty() { 0 } else { 1 };
         if !candidates.is_empty() {
             if let Some(original) = original {
@@ -4963,6 +4974,33 @@ mod tests {
         assert_eq!(state.workspaces[state.active.unwrap()].id, a);
         assert_eq!(state.recent_workspace_ids[0].workspace_id, c);
         assert_eq!(state.recent_workspace_ids[1].workspace_id, b);
+    }
+
+    #[test]
+    fn recent_workspace_switcher_appends_open_tabs_missing_from_history() {
+        let mut state = app_with_workspaces(&["current", "recent", "older", "unvisited"]);
+        let extra_tab = state.workspaces[2].test_add_tab(Some("logs"));
+        state.ensure_test_terminals();
+        state.switch_workspace(1);
+        state.switch_workspace(0);
+        let history = state.recent_workspace_ids.clone();
+
+        assert!(state.open_recent_workspace_switcher());
+        let switcher = state.recent_workspace.as_ref().unwrap();
+        let expected = [(0, 0), (1, 0), (2, 0), (2, extra_tab), (3, 0)]
+            .into_iter()
+            .map(|(workspace, tab)| crate::app::state::WorkspaceTabTarget {
+                workspace_id: state.workspaces[workspace].id.clone(),
+                tab_number: state.workspaces[workspace].tabs[tab].number,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(switcher.candidates, expected);
+        assert_eq!(switcher.selected, 1);
+        assert_eq!(state.recent_workspace_ids, history);
+        state.cycle_recent_workspace_switcher();
+        assert!(state.commit_recent_workspace_switcher());
+        assert_eq!(state.active, Some(2));
+        state.assert_invariants_for_test();
     }
 
     #[test]

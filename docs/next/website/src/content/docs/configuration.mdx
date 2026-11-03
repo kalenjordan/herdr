@@ -204,7 +204,7 @@ next_tab = ["prefix+n", "ctrl+alt+]"]
 
 `last_pane` switches back to the last focused pane across workspaces and tabs. It is unset by default because the tmux-style pane binding `prefix+l` is already used for pane-right focus.
 
-`recent_workspace` opens a most-recently-used workspace overlay. Press the shortcut again while holding Command to cycle, then release Command to switch. `esc` cancels and `enter` switches immediately for terminals that do not report modifier release.
+`recent_workspace` opens a workspace tab overlay with recently used tabs first, followed by all other open tabs in workspace order. Press the shortcut again while holding Command to cycle, then release Command to switch. `esc` cancels and `enter` switches immediately for terminals that do not report modifier release.
 
 `done_or_blocked_workspace` opens the same switcher filtered to tabs containing a done or blocked agent, ordered oldest-waiting first. Press Command-D again to cycle, then release Command to switch.
 
