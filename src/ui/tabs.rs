@@ -1,6 +1,6 @@
 use ratatui::{
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     widgets::Paragraph,
     Frame,
 };
@@ -100,8 +100,8 @@ fn status_labels(
     ws: &crate::workspace::Workspace,
     plugin_items: &[crate::plugin_status::PluginStatusItem],
     context_used_percent: Option<u8>,
-    recent_reply_links: &[crate::codex_usage::ReplyLink],
-    area_width: u16,
+    _recent_reply_links: &[crate::codex_usage::ReplyLink],
+    _area_width: u16,
 ) -> Vec<String> {
     let mut labels = plugin_items
         .iter()
@@ -116,79 +116,7 @@ fn status_labels(
     if let Some(used) = context_used_percent {
         labels.push(context_usage_label(used));
     }
-    labels.extend(prioritized_reply_link_labels(
-        ws,
-        plugin_items,
-        context_used_percent,
-        recent_reply_links,
-        area_width,
-    ));
     labels
-}
-
-fn reply_link_color(palette: &crate::app::state::Palette) -> Color {
-    match palette.overlay1 {
-        Color::Rgb(r, g, b) => Color::Rgb(
-            r.saturating_sub(24),
-            g.saturating_sub(24),
-            b.saturating_sub(24),
-        ),
-        _ => palette.overlay1,
-    }
-}
-
-// Links use only the space left after full tab labels and existing status items.
-fn prioritized_reply_link_labels(
-    ws: &crate::workspace::Workspace,
-    plugin_items: &[crate::plugin_status::PluginStatusItem],
-    context_used_percent: Option<u8>,
-    links: &[crate::codex_usage::ReplyLink],
-    area_width: u16,
-) -> Vec<String> {
-    if links.is_empty() {
-        return Vec::new();
-    }
-    let status_width = status_labels(ws, plugin_items, context_used_percent, &[], area_width)
-        .iter()
-        .map(|label| display_width_u16(label).saturating_add(2))
-        .fold(0u16, u16::saturating_add);
-    let tabs_width = (0..ws.tabs.len())
-        .map(|idx| tab_width(ws, idx).saturating_add(1))
-        .fold(NEW_TAB_WIDTH, u16::saturating_add);
-    let remaining = area_width
-        .saturating_sub(workspace_label_width(ws).saturating_add(1))
-        .saturating_sub(status_width)
-        .saturating_sub(u16::from(
-            right_status_width(ws, plugin_items, Rect::new(0, 0, area_width, 1)) > 0,
-        ))
-        .saturating_sub(tabs_width);
-    reply_link_labels(links, area_width.min(remaining.saturating_mul(2)))
-}
-
-fn reply_link_labels(links: &[crate::codex_usage::ReplyLink], area_width: u16) -> Vec<String> {
-    let budget = area_width / 2;
-    let count = links.len().min(2).min(usize::from(budget / 6));
-    if count == 0 {
-        return Vec::new();
-    }
-    let width = usize::from(budget) / count - 2;
-    links
-        .iter()
-        .take(count)
-        .map(|link| super::text::truncate_end(&reply_url_label(link, area_width), width))
-        .collect()
-}
-
-fn reply_url_label(link: &crate::codex_usage::ReplyLink, area_width: u16) -> String {
-    let url = link.url.as_str();
-    let text = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))
-        .unwrap_or(url);
-    super::text::truncate_end(
-        link.label.as_deref().unwrap_or(text),
-        usize::from((area_width / 3).clamp(4, 32)),
-    )
 }
 
 fn right_status_width(
@@ -225,14 +153,7 @@ fn left_status_rect(app: &AppState, ws: &crate::workspace::Workspace, status_rec
         .context_used_percent
         .map(context_usage_label)
         .into_iter()
-        .chain(git_dirty_label(ws))
-        .chain(prioritized_reply_link_labels(
-            ws,
-            &app.plugin_status_items,
-            app.context_used_percent,
-            &app.recent_reply_links,
-            app.view.tab_bar_rect.width,
-        ));
+        .chain(git_dirty_label(ws));
     let width = labels
         .map(|label| display_width_u16(&label).saturating_add(2))
         .sum::<u16>();
@@ -250,62 +171,6 @@ fn left_status_rect(app: &AppState, ws: &crate::workspace::Workspace, status_rec
         app.view.tab_bar_rect.y,
         width.min(right.saturating_sub(tabs_end)),
         1,
-    )
-}
-
-pub(crate) fn recent_reply_link_at(
-    app: &AppState,
-    position: ratatui::layout::Position,
-) -> Option<&str> {
-    let rect = recent_reply_links_rect(app);
-    let mut x = rect.x;
-    for (link, label) in app
-        .recent_reply_links
-        .iter()
-        .zip(prioritized_reply_link_labels(
-            app.active.and_then(|idx| app.workspaces.get(idx))?,
-            &app.plugin_status_items,
-            app.context_used_percent,
-            &app.recent_reply_links,
-            app.view.tab_bar_rect.width,
-        ))
-    {
-        let width = display_width_u16(&label)
-            .saturating_add(2)
-            .min(rect.right().saturating_sub(x));
-        let text_width = display_width_u16(&label).min(width.saturating_sub(1));
-        if Rect::new(x.saturating_add(1), rect.y, text_width, rect.height).contains(position) {
-            return Some(&link.url);
-        }
-        x = x.saturating_add(width);
-    }
-    None
-}
-
-pub(crate) fn recent_reply_links_rect(app: &AppState) -> Rect {
-    let Some(ws) = app.active.and_then(|idx| app.workspaces.get(idx)) else {
-        return Rect::default();
-    };
-    if app.recent_reply_links.is_empty() {
-        return Rect::default();
-    }
-    let rect = left_status_rect(
-        app,
-        ws,
-        status_rect(ws, &app.plugin_status_items, app.view.tab_bar_rect),
-    );
-    let preceding = app
-        .context_used_percent
-        .map(context_usage_label)
-        .into_iter()
-        .chain(git_dirty_label(ws))
-        .map(|label| display_width_u16(&label).saturating_add(2))
-        .sum::<u16>();
-    Rect::new(
-        rect.x.saturating_add(preceding),
-        rect.y,
-        rect.width.saturating_sub(preceding),
-        rect.height,
     )
 }
 
@@ -621,21 +486,6 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
                 Style::default().fg(p.overlay1).bg(p.panel_bg),
             ));
         }
-        for label in prioritized_reply_link_labels(
-            ws,
-            &app.plugin_status_items,
-            app.context_used_percent,
-            &app.recent_reply_links,
-            area.width,
-        ) {
-            let style = Style::default().fg(reply_link_color(p)).bg(p.panel_bg);
-            spans.push(ratatui::text::Span::styled(" ", style));
-            spans.push(ratatui::text::Span::styled(
-                label,
-                style.add_modifier(Modifier::UNDERLINED),
-            ));
-            spans.push(ratatui::text::Span::styled(" ", style));
-        }
         frame.render_widget(
             Paragraph::new(ratatui::text::Line::from(spans)),
             left_status_rect,
@@ -784,31 +634,6 @@ mod tests {
             .collect::<String>()
             .trim_end()
             .to_string()
-    }
-
-    #[test]
-    fn reply_link_is_darker_than_status_text_in_light_and_dark_themes() {
-        for palette in [
-            crate::app::state::Palette::catppuccin_latte(),
-            crate::app::state::Palette::catppuccin(),
-        ] {
-            let Color::Rgb(r, g, b) = palette.overlay1 else {
-                panic!("expected RGB status color")
-            };
-            let Color::Rgb(lr, lg, lb) = reply_link_color(&palette) else {
-                panic!("expected RGB link color")
-            };
-            assert!(lr < r && lg < g && lb < b);
-        }
-    }
-
-    #[test]
-    fn reply_label_uses_markdown_text() {
-        let link = crate::codex_usage::ReplyLink {
-            url: "http://outbound-dash.localhost:8766/calls".into(),
-            label: Some("Call Log".into()),
-        };
-        assert_eq!(reply_url_label(&link, 100), "Call Log");
     }
 
     #[test]
@@ -969,170 +794,13 @@ mod tests {
     }
 
     #[test]
-    fn app_link_renders_and_click_target_matches_after_context_and_dirty_status() {
-        let mut app = AppState::test_new();
-        app.mode = crate::app::Mode::Terminal;
-        let mut ws = Workspace::test_new("test");
-        ws.cached_git_dirty_count = Some(3);
-        app.active = Some(0);
-        app.workspaces = vec![ws];
-        app.context_used_percent = Some(31);
-        app.recent_reply_links = vec!["http://outbound-dash.localhost:8766/clients/a".into()];
-        app.view.tab_bar_rect = Rect::new(0, 0, 80, 1);
-        app.refresh_tab_bar_view();
-        let rect = recent_reply_links_rect(&app);
-        assert!(rect.width > 0);
-        let backend = TestBackend::new(80, 1);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
-            .unwrap();
-        let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(rect.x + 1, 0)].symbol(), "o");
-        assert_eq!(buffer[(rect.x + 1, 0)].fg, reply_link_color(&app.palette));
-        assert!(buffer[(rect.x + 1, 0)]
-            .modifier
-            .contains(Modifier::UNDERLINED));
-        for x in [rect.x, rect.x + rect.width - 1] {
-            assert_eq!(buffer[(x, 0)].symbol(), " ");
-            assert!(!buffer[(x, 0)].modifier.contains(Modifier::UNDERLINED));
-        }
-        let row = buffer_row_text(buffer, app.view.tab_bar_rect, 0);
-        assert!(row.contains("31%  ●3  outbound-dash.localhost"), "{row}");
-        assert!(!row.contains('↗'));
-        app.mouse_capture = true;
-        app.mouse_position = Some(ratatui::layout::Position::new(rect.x + 1, 0));
-        terminal
-            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
-            .unwrap();
-        assert!(terminal.backend().buffer()[(rect.x + 1, 0)]
-            .modifier
-            .contains(Modifier::UNDERLINED));
-        app.mouse_position = Some(ratatui::layout::Position::new(0, 0));
-        terminal
-            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
-            .unwrap();
-        assert!(terminal.backend().buffer()[(rect.x + 1, 0)]
-            .modifier
-            .contains(Modifier::UNDERLINED));
-        app.recent_reply_links.clear();
-        assert_eq!(recent_reply_links_rect(&app), Rect::default());
-    }
-
-    #[test]
-    fn tabs_take_priority_over_reply_links() {
-        for count in 3..=5 {
-            let mut app = AppState::test_new();
-            let mut ws = Workspace::test_new("test");
-            for _ in 1..count {
-                ws.test_add_tab(Some("Named tab"));
-            }
-            app.active = Some(0);
-            app.workspaces = vec![ws];
-            app.view.tab_bar_rect = Rect::new(0, 0, 80, 1);
-            app.refresh_tab_bar_view();
-            let without_links = app.view.tab_hit_areas.clone();
-            app.recent_reply_links = vec![
-                "https://example.com/first/long/path".into(),
-                "https://example.com/second/long/path".into(),
-            ];
-            app.refresh_tab_bar_view();
-            assert_eq!(app.view.tab_hit_areas, without_links);
-            app.view.tab_bar_rect.width = 160;
-            app.refresh_tab_bar_view();
-            assert!(recent_reply_links_rect(&app).width > 0);
-        }
-    }
-
-    #[test]
-    fn multiple_reply_links_render_with_independent_targets_and_plain_padding() {
-        let mut app = AppState::test_new();
-        app.active = Some(0);
-        app.workspaces = vec![Workspace::test_new("test")];
-        app.recent_reply_links = vec![
-            crate::codex_usage::ReplyLink {
-                url: "https://example.com/new".into(),
-                label: Some("最新".into()),
-            },
-            crate::codex_usage::ReplyLink {
-                url: "https://example.com/old".into(),
-                label: Some("Older".into()),
-            },
-        ];
-        app.view.tab_bar_rect = Rect::new(0, 0, 80, 1);
-        app.refresh_tab_bar_view();
-        let rect = recent_reply_links_rect(&app);
-        let mut terminal = Terminal::new(TestBackend::new(80, 1)).unwrap();
-        terminal
-            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
-            .unwrap();
-        for (offset, url) in [
-            (1, "https://example.com/new"),
-            (7, "https://example.com/old"),
-        ] {
-            let position = ratatui::layout::Position::new(rect.x + offset, 0);
-            assert_eq!(recent_reply_link_at(&app, position), Some(url));
-            assert!(terminal.backend().buffer()[(position.x, 0)]
-                .modifier
-                .contains(Modifier::UNDERLINED));
-        }
-        for offset in [0, 5, 6, 12] {
-            assert!(!terminal.backend().buffer()[(rect.x + offset, 0)]
-                .modifier
-                .contains(Modifier::UNDERLINED));
-        }
+    fn reply_links_do_not_reserve_tab_bar_space() {
+        let ws = Workspace::test_new("test");
+        let area = Rect::new(0, 0, 80, 1);
         assert_eq!(
-            recent_reply_link_at(&app, ratatui::layout::Position::new(rect.right(), 0)),
-            None
+            tab_content_rect_with_status(&ws, &[], None, &[], area),
+            tab_content_rect_with_status(&ws, &[], None, &["https://example.com".into()], area),
         );
-        app.recent_reply_links.extend([
-            "https://example.com/3".into(),
-            "https://example.com/4".into(),
-            "https://example.com/5".into(),
-        ]);
-        assert_eq!(reply_link_labels(&app.recent_reply_links, 120).len(), 2);
-        app.view.tab_bar_rect.width = 30;
-        app.refresh_tab_bar_view();
-        let labels = reply_link_labels(&app.recent_reply_links, 30);
-        assert_eq!(labels.len(), 2);
-        assert!(labels.iter().map(|s| display_width_u16(s) + 2).sum::<u16>() <= 15);
-        let rect = recent_reply_links_rect(&app);
-        assert_eq!(
-            recent_reply_link_at(&app, ratatui::layout::Position::new(rect.right(), 0)),
-            None
-        );
-    }
-
-    #[test]
-    fn clipped_link_padding_is_not_clickable() {
-        let mut app = AppState::test_new();
-        app.active = Some(0);
-        app.workspaces = vec![Workspace::test_new("test")];
-        app.recent_reply_links = vec!["https://example.com".into()];
-        app.view.tab_bar_rect = Rect::new(0, 0, 80, 1);
-        app.mouse_capture = true;
-        app.view.new_tab_hit_area = Rect::new(78, 0, 1, 1);
-        let rect = recent_reply_links_rect(&app);
-        assert_eq!(rect.width, 1);
-        assert_eq!(
-            recent_reply_link_at(&app, ratatui::layout::Position::new(rect.x, 0)),
-            None
-        );
-    }
-
-    #[test]
-    fn app_link_keeps_space_for_tabs_in_a_narrow_terminal() {
-        let mut app = AppState::test_new();
-        app.active = Some(0);
-        app.workspaces = vec![Workspace::test_new("test")];
-        app.recent_reply_links =
-            vec!["https://very-long-sandbox.example.com/very/long/path".into()];
-        app.view.tab_bar_rect = Rect::new(0, 0, 40, 1);
-        app.refresh_tab_bar_view();
-        assert!(app.view.tab_hit_areas[0].width >= MIN_TAB_WIDTH);
-        let rect = recent_reply_links_rect(&app);
-        assert!(rect.x >= app.view.tab_hit_areas[0].right());
-        assert!(rect.right() <= app.view.tab_bar_rect.right());
     }
 
     #[test]

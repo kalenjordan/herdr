@@ -6,6 +6,7 @@ use ratatui::{
     Frame,
 };
 
+mod codex_footer;
 mod dialogs;
 mod keybind_help;
 mod menus;
@@ -23,6 +24,7 @@ mod tabs;
 mod text;
 mod widgets;
 
+pub(crate) use self::codex_footer::{codex_footer_contains, recent_reply_link_at};
 use self::dialogs::{
     render_confirm_close_overlay, render_new_linked_worktree_overlay,
     render_open_existing_worktree_overlay, render_remove_worktree_overlay, render_rename_overlay,
@@ -89,7 +91,7 @@ pub(crate) use self::{
         mobile_switcher_workspace_doc_range, MobileSwitcherTarget,
     },
     panes::{apply_pane_chrome, pane_inner_rect, pane_is_scrolled_back},
-    tabs::{compute_tab_bar_view, recent_reply_link_at, tab_content_rect_with_status},
+    tabs::{compute_tab_bar_view, tab_content_rect_with_status},
     widgets::{centered_popup_rect, modal_stack_areas},
 };
 use crate::app::state::ViewLayout;

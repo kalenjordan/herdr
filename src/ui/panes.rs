@@ -317,6 +317,7 @@ pub(super) fn render_panes(
                 && !pane_is_scrolled_back(rt)
                 && app.pane_exposes_host_cursor(ws_idx, info.id);
             rt.render(frame, info.inner_rect, show_cursor);
+            super::codex_footer::render(app, frame, info, rt);
             render_pane_scrollbar(app, frame, info, rt);
 
             let should_dim = !info.is_focused && multi_pane && !terminal_active;

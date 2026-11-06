@@ -284,11 +284,19 @@ impl App {
         {
             if let Some(url) = crate::ui::recent_reply_link_at(
                 &self.state,
+                &self.terminal_runtimes,
                 ratatui::layout::Position::new(mouse.column, mouse.row),
             ) {
                 if let Err(err) = crate::platform::open_url(url) {
                     tracing::warn!(%err, "failed to open recent app URL");
                 }
+                return;
+            }
+            if crate::ui::codex_footer_contains(
+                &self.state,
+                &self.terminal_runtimes,
+                ratatui::layout::Position::new(mouse.column, mouse.row),
+            ) {
                 return;
             }
         }
