@@ -58,16 +58,18 @@ fn footer_rect(app: &AppState, info: &PaneInfo, rt: &TerminalRuntime) -> Option<
 
 fn link_targets(links: &[crate::codex_usage::ReplyLink], rect: Rect) -> Vec<(Rect, String, &str)> {
     let mut x = rect.x.saturating_add(2);
-    links
-        .iter()
-        .zip(reply_link_labels(links, rect.width))
-        .map(|(link, label)| {
-            let width = display_width_u16(&label).min(rect.right().saturating_sub(x));
-            let target = Rect::new(x, rect.y, width, 1);
-            x = x.saturating_add(width).saturating_add(2);
-            (target, label, link.url.as_str())
-        })
-        .collect()
+    let mut targets = Vec::new();
+    for link in links.iter().take(2) {
+        if x >= rect.right() {
+            break;
+        }
+        let label = reply_url_label(link);
+        let width = display_width_u16(&label).min(rect.right().saturating_sub(x));
+        let target = Rect::new(x, rect.y, width, 1);
+        x = x.saturating_add(width).saturating_add(2);
+        targets.push((target, label, link.url.as_str()));
+    }
+    targets
 }
 
 pub(super) fn render(app: &AppState, frame: &mut Frame, info: &PaneInfo, rt: &TerminalRuntime) {
@@ -143,30 +145,13 @@ fn reply_link_color(palette: &crate::app::state::Palette) -> Color {
     }
 }
 
-fn reply_link_labels(links: &[crate::codex_usage::ReplyLink], area_width: u16) -> Vec<String> {
-    let budget = area_width / 2;
-    let count = links.len().min(2).min(usize::from(budget / 6));
-    if count == 0 {
-        return Vec::new();
-    }
-    let width = usize::from(budget) / count - 2;
-    links
-        .iter()
-        .take(count)
-        .map(|link| super::text::truncate_end(&reply_url_label(link, area_width), width))
-        .collect()
-}
-
-fn reply_url_label(link: &crate::codex_usage::ReplyLink, area_width: u16) -> String {
+fn reply_url_label(link: &crate::codex_usage::ReplyLink) -> String {
     let url = link.url.as_str();
     let text = url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))
         .unwrap_or(url);
-    super::text::truncate_end(
-        &link.label.as_deref().unwrap_or(text).to_lowercase(),
-        usize::from((area_width / 3).clamp(4, 32)),
-    )
+    link.label.as_deref().unwrap_or(text).to_lowercase()
 }
 
 #[cfg(test)]
@@ -291,7 +276,18 @@ mod tests {
         assert!(!targets
             .iter()
             .any(|(r, _, _)| r.contains(Position::new(17, 20))));
-        assert!(link_targets(&links, Rect::new(0, 0, 5, 1)).is_empty());
+        let narrow = link_targets(&links, Rect::new(0, 0, 5, 1));
+        assert_eq!(narrow.len(), 1);
+        assert_eq!(narrow[0].0.width, 3);
+        let long_label =
+            "a complete link label that is longer than the old thirty two character limit";
+        let long = vec![crate::codex_usage::ReplyLink {
+            url: "https://example.com/long".into(),
+            label: Some(long_label.into()),
+        }];
+        let targets = link_targets(&long, Rect::new(0, 0, 100, 1));
+        assert_eq!(targets[0].1, long_label);
+        assert_eq!(targets[0].0.width, display_width_u16(long_label));
         assert!(link_targets(&[], rect).is_empty());
     }
 }
