@@ -56,6 +56,76 @@ fn footer_rect(app: &AppState, info: &PaneInfo, rt: &TerminalRuntime) -> Option<
     ))
 }
 
+pub(super) fn focused_footer_visible(app: &AppState, runtimes: &TerminalRuntimeRegistry) -> bool {
+    let Some(ws_idx) = app.active else {
+        return false;
+    };
+    app.view
+        .pane_infos
+        .iter()
+        .filter(|info| info.is_focused)
+        .any(|info| {
+            app.runtime_for_pane_in_workspace(runtimes, ws_idx, info.id)
+                .and_then(|rt| footer_rect(app, info, rt))
+                .is_some()
+        })
+}
+
+fn git_dirty_label(ws: &crate::workspace::Workspace) -> Option<String> {
+    ws.git_dirty_count()
+        .filter(|count| *count > 0)
+        .map(|count| format!("●{count}"))
+}
+
+fn context_usage_label(used: u8) -> String {
+    format!("{}%", used.min(100))
+}
+
+fn context_usage_color(used: u8, palette: &crate::app::state::Palette) -> ratatui::style::Color {
+    if used > 70 {
+        palette.red
+    } else if used > 50 {
+        palette.peach
+    } else {
+        palette.overlay1
+    }
+}
+
+fn status_spans(app: &AppState) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    if let Some(used) = app.context_used_percent {
+        spans.push(Span::styled(
+            context_usage_label(used),
+            Style::default().fg(context_usage_color(used, &app.palette)),
+        ));
+    }
+    if let Some(label) = app
+        .active
+        .and_then(|idx| app.workspaces.get(idx))
+        .and_then(git_dirty_label)
+    {
+        spans.push(Span::styled(
+            label,
+            Style::default().fg(app.palette.overlay1),
+        ));
+    }
+    spans
+}
+
+fn links_rect(app: &AppState, rect: Rect) -> Rect {
+    let width = status_spans(app)
+        .iter()
+        .map(|span| display_width_u16(&span.content).saturating_add(2))
+        .sum::<u16>()
+        .min(rect.width);
+    Rect::new(
+        rect.x.saturating_add(width),
+        rect.y,
+        rect.width.saturating_sub(width),
+        1,
+    )
+}
+
 fn link_targets(links: &[crate::codex_usage::ReplyLink], rect: Rect) -> Vec<(Rect, String, &str)> {
     let mut x = rect.x.saturating_add(2);
     let mut targets = Vec::new();
@@ -85,7 +155,19 @@ pub(super) fn render(app: &AppState, frame: &mut Frame, info: &PaneInfo, rt: &Te
     if !info.is_focused {
         return;
     }
-    for (target, label, _) in link_targets(&app.recent_reply_links, rect) {
+    let mut x = rect.x.saturating_add(2);
+    for span in status_spans(app) {
+        let width = display_width_u16(&span.content).min(rect.right().saturating_sub(x));
+        if width == 0 {
+            break;
+        }
+        frame.render_widget(
+            Paragraph::new(Line::from(span)).style(Style::default().bg(bg)),
+            Rect::new(x, rect.y, width, 1),
+        );
+        x = x.saturating_add(width).saturating_add(2);
+    }
+    for (target, label, _) in link_targets(&app.recent_reply_links, links_rect(app, rect)) {
         let hovered = app.mouse_capture
             && app
                 .mouse_position
@@ -130,7 +212,7 @@ pub(crate) fn recent_reply_link_at<'a>(
     let info = app.view.pane_infos.iter().find(|info| info.is_focused)?;
     let rt = app.runtime_for_pane_in_workspace(runtimes, ws_idx, info.id)?;
     let rect = footer_rect(app, info, rt)?;
-    link_targets(&app.recent_reply_links, rect)
+    link_targets(&app.recent_reply_links, links_rect(app, rect))
         .into_iter()
         .find_map(|(target, _, url)| target.contains(position).then_some(url))
 }
@@ -190,7 +272,7 @@ mod tests {
         };
         app.view.pane_infos = vec![info.clone()];
         let mut runtimes = TerminalRuntimeRegistry::default();
-        runtimes.insert(terminal_id, rt);
+        runtimes.insert(terminal_id.clone(), rt);
         let mut terminal = Terminal::new(TestBackend::new(80, 6)).unwrap();
         let draw = |app: &AppState, terminal: &mut Terminal<TestBackend>| {
             let rt = app
@@ -203,6 +285,18 @@ mod tests {
                 })
                 .unwrap();
         };
+        for agent in [Some(Agent::Claude), None] {
+            app.terminals
+                .get_mut(&terminal_id)
+                .unwrap()
+                .set_detected_state(agent, AgentState::Idle);
+            assert!(!focused_footer_visible(&app, &runtimes));
+        }
+        app.terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_detected_state(Some(Agent::Codex), AgentState::Idle);
+        assert!(focused_footer_visible(&app, &runtimes));
         draw(&app, &mut terminal);
         assert!((0..80).all(|x| terminal.backend().buffer()[(x, 5)].symbol() == " "));
         app.recent_reply_links = vec![crate::codex_usage::ReplyLink {
@@ -233,17 +327,42 @@ mod tests {
             recent_reply_link_at(&app, &runtimes, Position::new(1, 5)),
             None
         );
+        app.context_used_percent = Some(31);
+        app.workspaces[0].cached_git_dirty_count = Some(3);
+        draw(&app, &mut terminal);
+        let row: String = (0..80)
+            .map(|x| terminal.backend().buffer()[(x, 5)].symbol())
+            .collect();
+        assert!(row.starts_with("  31%  ●3  preview"), "{row:?}");
+        assert_eq!(
+            recent_reply_link_at(&app, &runtimes, Position::new(2, 5)),
+            None
+        );
+        assert_eq!(
+            recent_reply_link_at(&app, &runtimes, Position::new(11, 5)),
+            Some("https://example.com")
+        );
         let rt = app
             .runtime_for_pane_in_workspace(&runtimes, 0, pane_id)
             .unwrap();
         assert_eq!(rt.visible_text(), original);
         rt.test_process_pty_bytes(b"\x1b[6;1H\x1b[2KChoose a model");
+        assert!(!focused_footer_visible(&app, &runtimes));
         draw(&app, &mut terminal);
         assert_eq!(terminal.backend().buffer()[(0, 5)].symbol(), "C");
         assert_eq!(
             recent_reply_link_at(&app, &runtimes, Position::new(2, 5)),
             None
         );
+    }
+
+    #[test]
+    fn context_usage_color_uses_warning_and_critical_thresholds() {
+        let app = AppState::test_new();
+        assert_eq!(context_usage_color(50, &app.palette), app.palette.overlay1);
+        assert_eq!(context_usage_color(51, &app.palette), app.palette.peach);
+        assert_eq!(context_usage_color(70, &app.palette), app.palette.peach);
+        assert_eq!(context_usage_color(71, &app.palette), app.palette.red);
     }
 
     #[test]

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Codex context percentage and the active workspace dirty-file count appear beside reply links in the bottom Codex footer instead of the tab bar when that footer is visible. Other panes retain the tab-bar indicators.
+
 - Added agent-requested clipboard secret entry with `herdr secret request`, allowing Herdr to update a workspace `.env`, `.env.*`, or `.dev.vars` file without sending the value through the pane or API response.
 
 ### Added

@@ -410,7 +410,7 @@ fn tab_drop_indicator_x(
     None
 }
 
-pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
+pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect, footer_visible: bool) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -470,7 +470,7 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
     }
 
     let left_status_rect = left_status_rect(app, ws, status_rect);
-    if left_status_rect.width > 0 {
+    if !footer_visible && left_status_rect.width > 0 {
         let mut spans = Vec::new();
         if let Some(used) = app.context_used_percent {
             spans.push(ratatui::text::Span::styled(
@@ -654,7 +654,7 @@ mod tests {
         let backend = TestBackend::new(30, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
+            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect, false))
             .unwrap();
 
         let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
@@ -674,6 +674,23 @@ mod tests {
     }
 
     #[test]
+    fn visible_footer_suppresses_duplicate_tab_indicators() {
+        let mut app = AppState::test_new();
+        let mut ws = Workspace::test_new("test");
+        ws.cached_git_dirty_count = Some(3);
+        app.workspaces = vec![ws];
+        app.active = Some(0);
+        app.context_used_percent = Some(31);
+        app.view.tab_bar_rect = Rect::new(0, 0, 80, 1);
+        let mut terminal = Terminal::new(TestBackend::new(80, 1)).unwrap();
+        terminal
+            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect, true))
+            .unwrap();
+        let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
+        assert!(!row.contains("31%") && !row.contains("●3"), "{row:?}");
+    }
+
+    #[test]
     fn dirty_status_reserves_space_beside_tabs_and_renders() {
         let mut app = AppState::test_new();
         let mut ws = Workspace::test_new("test");
@@ -689,7 +706,7 @@ mod tests {
         let backend = TestBackend::new(30, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
+            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect, false))
             .unwrap();
 
         let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
@@ -721,7 +738,7 @@ mod tests {
         let backend = TestBackend::new(40, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
+            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect, false))
             .unwrap();
         let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
         assert!(row.ends_with(" notifications off"), "tab row: {row:?}");
@@ -747,7 +764,7 @@ mod tests {
         let backend = TestBackend::new(40, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
+            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect, false))
             .unwrap();
         let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
         assert!(row.starts_with(" test   1       31%"), "tab row: {row:?}");
@@ -784,7 +801,7 @@ mod tests {
         let backend = TestBackend::new(40, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
+            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect, false))
             .unwrap();
         let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
         assert!(
@@ -846,7 +863,7 @@ mod tests {
         let backend = TestBackend::new(30, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
+            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect, false))
             .unwrap();
         let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
         assert!(row.contains(" +  72%"), "tab row: {row:?}");
@@ -866,7 +883,7 @@ mod tests {
         let backend = TestBackend::new(30, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
+            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect, false))
             .unwrap();
 
         let tab_rect = app.view.tab_hit_areas[0];
@@ -912,7 +929,7 @@ mod tests {
         let backend = TestBackend::new(30, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
+            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect, false))
             .unwrap();
 
         let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);

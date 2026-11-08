@@ -436,7 +436,12 @@ pub fn render_with_runtime_registry(
         }
     }
     if app.view.layout != ViewLayout::Mobile {
-        render_tab_bar(app, frame, tab_bar_area);
+        render_tab_bar(
+            app,
+            frame,
+            tab_bar_area,
+            codex_footer::focused_footer_visible(app, terminal_runtimes),
+        );
     }
     render_panes(app, terminal_runtimes, frame, terminal_area);
 
