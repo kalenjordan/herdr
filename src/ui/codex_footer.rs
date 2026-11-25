@@ -1,7 +1,7 @@
 //! Presentation-only replacement of Codex's shortcut hint row. The PTY is untouched.
 use ratatui::{
     layout::{Position, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
     Frame,
@@ -139,6 +139,10 @@ fn link_targets(links: &[crate::codex_usage::ReplyLink], rect: Rect) -> Vec<(Rec
         x = x.saturating_add(width).saturating_add(2);
         targets.push((target, label, link.url.as_str()));
     }
+    let shift = rect.right().saturating_sub(x);
+    for (target, _, _) in &mut targets {
+        target.x += shift;
+    }
     targets
 }
 
@@ -175,7 +179,7 @@ pub(super) fn render(app: &AppState, frame: &mut Frame, info: &PaneInfo, rt: &Te
         let color = if hovered {
             app.palette.accent
         } else {
-            reply_link_color(&app.palette)
+            app.palette.overlay1
         };
         let style = Style::default()
             .fg(color)
@@ -215,16 +219,6 @@ pub(crate) fn recent_reply_link_at<'a>(
     link_targets(&app.recent_reply_links, links_rect(app, rect))
         .into_iter()
         .find_map(|(target, _, url)| target.contains(position).then_some(url))
-}
-fn reply_link_color(palette: &crate::app::state::Palette) -> Color {
-    match palette.overlay1 {
-        Color::Rgb(r, g, b) => Color::Rgb(
-            r.saturating_add(12),
-            g.saturating_add(12),
-            b.saturating_add(12),
-        ),
-        _ => palette.overlay1,
-    }
 }
 
 fn reply_url_label(link: &crate::codex_usage::ReplyLink) -> String {
@@ -304,27 +298,27 @@ mod tests {
             label: Some("Preview".into()),
         }];
         draw(&app, &mut terminal);
-        assert_eq!(terminal.backend().buffer()[(2, 5)].symbol(), "p");
+        assert_eq!(terminal.backend().buffer()[(71, 5)].symbol(), "p");
         assert_eq!(
-            terminal.backend().buffer()[(2, 5)].fg,
-            reply_link_color(&app.palette)
+            terminal.backend().buffer()[(71, 5)].fg,
+            app.palette.overlay1
         );
         app.mouse_capture = true;
+        app.mouse_position = Some(Position::new(71, 5));
+        draw(&app, &mut terminal);
+        assert_eq!(terminal.backend().buffer()[(71, 5)].fg, app.palette.accent);
         app.mouse_position = Some(Position::new(2, 5));
         draw(&app, &mut terminal);
-        assert_eq!(terminal.backend().buffer()[(2, 5)].fg, app.palette.accent);
-        app.mouse_position = Some(Position::new(1, 5));
-        draw(&app, &mut terminal);
         assert_eq!(
-            terminal.backend().buffer()[(2, 5)].fg,
-            reply_link_color(&app.palette)
+            terminal.backend().buffer()[(71, 5)].fg,
+            app.palette.overlay1
         );
         assert_eq!(
-            recent_reply_link_at(&app, &runtimes, Position::new(2, 5)),
+            recent_reply_link_at(&app, &runtimes, Position::new(71, 5)),
             Some("https://example.com")
         );
         assert_eq!(
-            recent_reply_link_at(&app, &runtimes, Position::new(1, 5)),
+            recent_reply_link_at(&app, &runtimes, Position::new(2, 5)),
             None
         );
         app.context_used_percent = Some(31);
@@ -333,13 +327,14 @@ mod tests {
         let row: String = (0..80)
             .map(|x| terminal.backend().buffer()[(x, 5)].symbol())
             .collect();
-        assert!(row.starts_with("  31%  ●3  preview"), "{row:?}");
+        assert!(row.starts_with("  31%  ●3"), "{row:?}");
+        assert!(row.ends_with("preview  "), "{row:?}");
         assert_eq!(
             recent_reply_link_at(&app, &runtimes, Position::new(2, 5)),
             None
         );
         assert_eq!(
-            recent_reply_link_at(&app, &runtimes, Position::new(11, 5)),
+            recent_reply_link_at(&app, &runtimes, Position::new(71, 5)),
             Some("https://example.com")
         );
         let rt = app
@@ -351,7 +346,7 @@ mod tests {
         draw(&app, &mut terminal);
         assert_eq!(terminal.backend().buffer()[(0, 5)].symbol(), "C");
         assert_eq!(
-            recent_reply_link_at(&app, &runtimes, Position::new(2, 5)),
+            recent_reply_link_at(&app, &runtimes, Position::new(71, 5)),
             None
         );
     }
@@ -389,12 +384,12 @@ mod tests {
         ];
         let rect = Rect::new(10, 20, 80, 1);
         let targets = link_targets(&links, rect);
-        assert_eq!(targets[0].0, Rect::new(12, 20, 4, 1));
-        assert_eq!(targets[1].0, Rect::new(18, 20, 5, 1));
+        assert_eq!(targets[0].0, Rect::new(77, 20, 4, 1));
+        assert_eq!(targets[1].0, Rect::new(83, 20, 5, 1));
         assert_eq!(targets[1].2, "https://example.com/b");
         assert!(!targets
             .iter()
-            .any(|(r, _, _)| r.contains(Position::new(17, 20))));
+            .any(|(r, _, _)| r.contains(Position::new(82, 20))));
         let narrow = link_targets(&links, Rect::new(0, 0, 5, 1));
         assert_eq!(narrow.len(), 1);
         assert_eq!(narrow[0].0.width, 3);
